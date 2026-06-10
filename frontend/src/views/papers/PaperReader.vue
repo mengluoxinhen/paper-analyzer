@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="reader-pane">
     <div class="pane-toolbar">
       <h3 class="pane-title">📄 原文</h3>
@@ -90,14 +90,14 @@ loadAllTags();
 </script>
 
 <style scoped>
-.reader-pane { display: flex; flex-direction: column; height: 100%; width: 100%; align-self: stretch; overflow: hidden; }
+.reader-pane { display: flex; flex-direction: column; height: 100%; width: 100%; align-self: stretch; overflow: hidden; min-width: 0; }
 .pane-toolbar {
   display: flex; justify-content: space-between; align-items: center;
   padding: var(--space-lg) var(--space-xl); flex-shrink: 0;
   border-bottom: 1px solid var(--border-light);
 }
 .pane-title { font-size: var(--font-size-md); font-weight: 600; color: var(--text-primary); }
-.pane-body { flex: 1; overflow: hidden; padding: 0; position: relative; }
+.pane-body { flex: 1; overflow: hidden; padding: 0; position: relative; min-width: 0; }
 
 .tag-bar { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; padding: 6px var(--space-xl); border-bottom: 1px solid var(--border-light); flex-shrink: 0; }
 .tag-chip { display: inline-flex; align-items: center; gap: 2px; font-size: 11px; color: var(--accent); background: var(--accent-light); padding: 1px 8px; border-radius: var(--radius-full); }
@@ -128,8 +128,8 @@ loadAllTags();
 :deep(.markdown-body a:hover) { text-decoration: underline; }
 :deep(.markdown-body ul), :deep(.markdown-body ol) { padding-left: 1.5em; }
 :deep(.markdown-body li) { margin: 0.3em 0; }
-.pdf-container { position: absolute; top: 0; left: 0; right: 0; bottom: 0; }
-.pdf-iframe { width: 100%; height: 100%; border: none; display: block; }
+.pdf-container { position: absolute; top: 0; left: 0; right: 0; bottom: 0; min-width: 0; }
+.pdf-iframe { width: 100%; height: 100%; border: none; display: block; min-width: 0; }
 .no-pdf { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; color: var(--text-tertiary); padding: var(--space-xl); }
 .no-pdf-icon { font-size: 64px; margin-bottom: var(--space-lg); opacity: 0.5; }
 </style>

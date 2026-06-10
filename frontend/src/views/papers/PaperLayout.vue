@@ -13,7 +13,7 @@
         @open-settings="settingsVisible = true"
       />
     </aside>
-    <main class="paper-main">
+    <main class="paper-main" :style="mainPanelStyle">
       <PaperReader
         v-if="store.currentPaper"
         :paper="store.currentPaper"
@@ -25,7 +25,12 @@
         <div class="empty-desc">从左侧论文库选择一篇论文，或上传新的论文</div>
       </div>
     </main>
-    <aside class="paper-chat-panel">
+    <div
+      class="resize-handle"
+      @mousedown="startResize"
+      :class="{ active: resizing }"
+    ></div>
+    <aside class="paper-chat-panel" :style="chatPanelStyle">
       <PaperChat
         v-if="store.currentPaper"
         :paperId="store.currentPaper.id"
@@ -46,7 +51,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from "vue";
+import { ref, computed, onMounted } from "vue";
 import { ElMessage } from "element-plus";
 import { usePapersStore } from "../../stores/papers";
 import { uploadPaper } from "../../api/papers";
@@ -57,9 +62,43 @@ import SettingsDialog from "../settings/SettingsDialog.vue";
 
 const store = usePapersStore();
 const settingsVisible = ref(false);
+const chatWidth = ref(380);
+const resizing = ref(false);
+const MIN_CHAT = 280;
+const MAX_CHAT = 600;
+const MIN_MAIN = 100;
 const libraryRef = ref(null);
 const summarizing = ref(false);
 const summaryStreamText = ref('');
+
+const chatPanelStyle = computed(() => ({ width: chatWidth.value + 'px', minWidth: chatWidth.value + 'px', flexShrink: '0' }));
+const mainPanelStyle = computed(() => ({ minWidth: '0' }));
+
+function startResize(e) {
+  resizing.value = true;
+  const startX = e.clientX;
+  const startWidth = chatWidth.value;
+  const onMove = (ev) => {
+    const delta = startX - ev.clientX;
+    const next = Math.min(MAX_CHAT, Math.max(MIN_CHAT, startWidth + delta));
+    // Ensure main panel stays wide enough
+    const containerWidth = document.querySelector('.paper-layout')?.clientWidth || 1400;
+    const mainNext = containerWidth - 260 - 8 - 12 * 5 - next;
+    if (mainNext < MIN_MAIN) return;
+    chatWidth.value = next;
+  };
+  const onUp = () => {
+    resizing.value = false;
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  };
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+  document.body.style.cursor = 'col-resize';
+  document.body.style.userSelect = 'none';
+}
 
 onMounted(() => { store.fetchList(); });
 
@@ -168,8 +207,12 @@ async function streamSummarize(paperId) {
 .paper-sidebar:hover { box-shadow: var(--shadow-md); }
 .paper-main { flex: 1; min-width: 0; background: var(--bg-card); border-radius: var(--radius-lg); box-shadow: var(--shadow-card); overflow: hidden; transition: box-shadow var(--transition-base); }
 .paper-main:hover { box-shadow: var(--shadow-md); }
-.paper-chat-panel { width: 380px; min-width: 380px; flex-shrink: 0; background: var(--bg-card); border-radius: var(--radius-lg); box-shadow: var(--shadow-card); display: flex; flex-direction: column; overflow: hidden; transition: box-shadow var(--transition-base); }
+.paper-chat-panel { flex-shrink: 0; background: var(--bg-card); border-radius: var(--radius-lg); box-shadow: var(--shadow-card); display: flex; flex-direction: column; overflow: hidden; transition: box-shadow var(--transition-base); }
 .paper-chat-panel:hover { box-shadow: var(--shadow-md); }
+
+.resize-handle { width: 8px; cursor: col-resize; flex-shrink: 0; position: relative; z-index: 1; display: flex; align-items: center; justify-content: center; }
+.resize-handle::after { content: ""; width: 4px; height: 40px; border-radius: 2px; background: var(--border-light); transition: background 0.15s, height 0.15s; }
+.resize-handle:hover::after, .resize-handle.active::after { background: var(--accent); height: 60px; }
 
 .main-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; height: 100%; padding: 40px; text-align: center; }
 .chat-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px; text-align: center; }

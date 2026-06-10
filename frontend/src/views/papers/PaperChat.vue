@@ -11,18 +11,18 @@
 
         <div class="summary-card">
           <div class="summary-label">解决的问题</div>
-          <p v-if="summary.problem" class="summary-text">{{ summary.problem }}</p>
-          <p v-else class="summary-text empty-hint">未提取到相关内容</p>
+          <div v-if="summary.problem" class="summary-text" v-html="renderMsg(summary.problem)"></div>
+          <div v-else class="summary-text empty-hint">未提取到相关内容</div>
         </div>
         <div class="summary-card">
           <div class="summary-label">结论</div>
-          <p v-if="summary.conclusion" class="summary-text">{{ summary.conclusion }}</p>
-          <p v-else class="summary-text empty-hint">未提取到相关内容</p>
+          <div v-if="summary.conclusion" class="summary-text" v-html="renderMsg(summary.conclusion)"></div>
+          <div v-else class="summary-text empty-hint">未提取到相关内容</div>
         </div>
         <div class="summary-card">
           <div class="summary-label">工况</div>
           <div v-if="summary.conditions" class="conditions-table" v-html="renderTable(summary.conditions)"></div>
-          <p v-else class="summary-text empty-hint">未提取到相关内容</p>
+          <div v-else class="summary-text empty-hint">未提取到相关内容</div>
         </div>
       </div>
 
@@ -69,7 +69,7 @@
 
 <script setup>
 import { ref, watch, nextTick } from "vue";
-import { marked } from "marked";
+import { renderMarkdown } from "../../utils/marked-setup.js";
 
 const props = defineProps({
 
@@ -124,8 +124,8 @@ function downloadSummary() {
   URL.revokeObjectURL(url);
 }
 
-function renderMsg(text) { return marked(text || ""); }
-function renderTable(text) { return marked(text || ""); }
+function renderMsg(text) { return renderMarkdown(text); }
+function renderTable(text) { return renderMarkdown(text); }
 
 function scrollToBottom() {
   nextTick(() => { if (chatBody.value) chatBody.value.scrollTop = chatBody.value.scrollHeight; });
@@ -176,16 +176,18 @@ async function sendMessage() {
 .summary-header { font-size: var(--font-size-sm); font-weight: 600; color: var(--text-primary); margin-bottom: var(--space-md); }
 .summary-card { padding: var(--space-md); border-radius: var(--radius-md); background: var(--bg-hover); border: 1px solid var(--border-light); margin-bottom: var(--space-sm); }
 .summary-label { font-size: 11px; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 4px; }
-.summary-text { font-size: var(--font-size-sm); line-height: 1.6; color: var(--text-secondary); margin: 0; white-space: pre-wrap; }
+.summary-text { font-size: 14px; line-height: 1.6; color: var(--text-primary); margin: 0; }
 .empty-hint { color: var(--text-tertiary); font-style: italic; }
+.summary-text :deep(ol), .summary-text :deep(ul) { padding-left: 1.4em; margin: 6px 0; }
+.summary-text :deep(li) { margin: 4px 0; }
 
 .streaming-card { background: var(--bg-card); border-color: var(--accent); }
-.streaming-text { font-size: var(--font-size-sm); line-height: 1.6; color: var(--text-secondary); }
+.streaming-text { font-size: 14px; line-height: 1.6; color: var(--text-primary); }
 .streaming-text :deep(p) { margin: 4px 0; }
 
 .conditions-table :deep(table) { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 4px; }
 .conditions-table :deep(th) { background: rgba(91,95,227,0.06); padding: 4px 8px; text-align: left; font-weight: 600; color: var(--text-primary); border-bottom: 1px solid var(--border-light); }
-.conditions-table :deep(td) { padding: 4px 8px; border-bottom: 1px solid var(--border-light); color: var(--text-secondary); }
+.conditions-table :deep(td) { padding: 4px 8px; border-bottom: 1px solid var(--border-light); color: var(--text-primary); }
 
 .chat-divider { text-align: center; font-size: 11px; color: var(--text-tertiary); margin: var(--space-sm) 0; }
 .chat-empty { display: flex; align-items: center; justify-content: center; flex: 1; }
@@ -227,4 +229,10 @@ async function sendMessage() {
 .summary-actions { display: flex; gap: 4px; }
 .action-btn { width: 28px; height: 28px; border-radius: 50%; border: 1px solid var(--border-light); background: var(--bg-card); color: var(--text-secondary); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all var(--transition-fast); }
 .action-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-light); }
+
+.msg-content :deep(.math-inline) { font-family: var(--font-mono); background: rgba(91,95,227,0.06); padding: 1px 4px; border-radius: 3px; font-style: italic; color: var(--accent); }
+.msg-content :deep(.math-block) { display: block; text-align: center; font-family: var(--font-mono); background: rgba(91,95,227,0.04); padding: var(--space-md); border-radius: var(--radius-sm); margin: 8px 0; font-style: italic; color: var(--accent); }
+.summary-text :deep(.math-inline) { font-family: var(--font-mono); background: rgba(91,95,227,0.06); padding: 1px 4px; border-radius: 3px; font-style: italic; color: var(--accent); }
+.streaming-text :deep(.math-inline) { font-family: var(--font-mono); background: rgba(91,95,227,0.06); padding: 1px 4px; border-radius: 3px; font-style: italic; color: var(--accent); }
+.conditions-table :deep(.math-inline) { font-family: var(--font-mono); background: rgba(91,95,227,0.06); padding: 1px 4px; border-radius: 3px; font-style: italic; color: var(--accent); }
 </style>
