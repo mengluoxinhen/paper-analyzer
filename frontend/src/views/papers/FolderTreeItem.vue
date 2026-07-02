@@ -80,7 +80,7 @@ import { Folder, FolderOpened, Plus, Edit, Delete } from "@element-plus/icons-vu
 
 defineProps({
   folder: Object, depth: Number, activeId: [Number, String],
-  dropTargetId: [Number, String], editingId: Number, editingName: String,
+  dropTargetId: [Number, String], editingId: [Number, String], editingName: String,
 });
 defineEmits([
   "select", "dragOver", "dragLeave", "drop",

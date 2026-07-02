@@ -44,7 +44,7 @@
 
 <script setup>
 import { ref, computed, watch } from "vue";
-import { Plus, Close, Check, Folder, FolderOpened } from "@element-plus/icons-vue";
+import { Plus, Close, Check } from "@element-plus/icons-vue";
 
 import { getTags, createTag, setPaperTags } from "../../api/papers";
 

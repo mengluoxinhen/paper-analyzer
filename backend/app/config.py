@@ -32,8 +32,13 @@ class Settings:
         self.llm_model = os.getenv("LLM_MODEL", "deepseek-chat")
         self.llm_max_tokens = int(os.getenv("LLM_MAX_TOKENS", "4096"))
         self.llm_temperature = float(os.getenv("LLM_TEMPERATURE", "0.7"))
-        self.mineru_api_url = os.getenv("MINERU_API_URL", "https://mineru.net/api/v4/extract/task")
+        # MinerU v4 batch upload API
         self.mineru_api_token = os.getenv("MINERU_API_TOKEN", "")
+        self.mineru_batch_url = os.getenv("MINERU_BATCH_URL", "https://mineru.net/api/v4/file-urls/batch")
+        self.mineru_result_url = os.getenv("MINERU_RESULT_URL", "https://mineru.net/api/v4/extract-results/batch")
+        self.mineru_model_version = os.getenv("MINERU_MODEL_VERSION", "vlm")
+        self.mineru_poll_interval = float(os.getenv("MINERU_POLL_INTERVAL", "5.0"))
+        self.mineru_poll_max_retries = int(os.getenv("MINERU_POLL_MAX_RETRIES", "60"))
         upload_dir = os.getenv("UPLOAD_DIR", "uploads")
         if not os.path.isabs(upload_dir):
             upload_dir = os.path.normpath(os.path.join(str(BASE_DIR), upload_dir))
@@ -43,3 +48,4 @@ class Settings:
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+

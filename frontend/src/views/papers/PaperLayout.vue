@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="paper-layout">
     <aside class="paper-sidebar">
       <PaperLibrary
@@ -6,6 +6,7 @@
         :papers="store.list"
         :loading="store.loading"
         :currentId="store.currentPaper ? store.currentPaper.id : null"
+        :parseProgressMap="parseProgressMap"
         @select="handleSelect"
         @delete="handleDelete"
         @upload="handleUpload"
@@ -51,7 +52,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from "vue";
+import { ref, computed, onMounted, reactive } from "vue";
 import { ElMessage } from "element-plus";
 import { usePapersStore } from "../../stores/papers";
 import { uploadPaper } from "../../api/papers";
@@ -71,6 +72,9 @@ const libraryRef = ref(null);
 const summarizing = ref(false);
 const summaryStreamText = ref('');
 
+// paperId → { progress: number, message: string }
+const parseProgressMap = reactive({});
+
 const chatPanelStyle = computed(() => ({ width: chatWidth.value + 'px', minWidth: chatWidth.value + 'px', flexShrink: '0' }));
 const mainPanelStyle = computed(() => ({ minWidth: '0' }));
 
@@ -81,7 +85,6 @@ function startResize(e) {
   const onMove = (ev) => {
     const delta = startX - ev.clientX;
     const next = Math.min(MAX_CHAT, Math.max(MIN_CHAT, startWidth + delta));
-    // Ensure main panel stays wide enough
     const containerWidth = document.querySelector('.paper-layout')?.clientWidth || 1400;
     const mainNext = containerWidth - 260 - 8 - 12 * 5 - next;
     if (mainNext < MIN_MAIN) return;
@@ -107,10 +110,8 @@ async function handleSelect(paper) {
   store.conversations = [];
   summaryStreamText.value = '';
   await store.fetchConversations(paper.id);
-  // 先尝试获取已有总结，有则直接复用
   await store.fetchSummary(paper.id);
   if (store.currentSummary) return;
-  // 没有总结且论文有内容，自动生成
   if (store.currentPaper.status === 'parsed' && store.currentPaper.md_content) {
     summarizing.value = true;
     try {
@@ -120,11 +121,12 @@ async function handleSelect(paper) {
     }
   } else if (store.currentPaper.status === 'parse_failed') {
     store.currentSummary = { problem: 'MinerU PDF 解析失败，请检查 API Token 是否正确配置', conclusion: '', conditions: '', full_text: '' };
+  } else if (store.currentPaper.status === 'parsing') {
+    store.currentSummary = { problem: 'MinerU 正在解析 PDF，请稍候...', conclusion: '', conditions: '', full_text: '' };
   } else {
-    store.currentSummary = { problem: '请上传对应的 MD 文件以生成总结', conclusion: '', conditions: '', full_text: '' };
+    store.currentSummary = { problem: '请先触发 MinerU 解析以生成总结', conclusion: '', conditions: '', full_text: '' };
   }
 }
-
 
 async function handleRegenerate() {
   if (!store.currentPaper) return;
@@ -143,13 +145,89 @@ async function handleDelete(paper) {
   ElMessage.success("论文已删除");
 }
 
-async function handleUpload({ title, pdfFile, mdFile, folderId }) {
+async function handleUpload({ title, pdfFile, folderId }) {
   try {
-    await uploadPaper(title, pdfFile, mdFile, folderId);
-    ElMessage.success("上传成功");
+    const res = await uploadPaper(title, pdfFile, folderId);
+    const paper = res.data;
+    ElMessage.success("上传成功，正在提交 MinerU 解析...");
     await store.fetchList();
+
+    parseProgressMap[paper.id] = { progress: 0, message: "正在提交..." };
+    await streamParse(paper.id);
+
+    ElMessage.success("MinerU 解析完成");
+    await store.fetchList();
+
+    // 自动选中新上传的论文并触发总结
+    store.currentPaper = await store.fetchPaper(paper.id);
+    if (store.currentPaper.md_content) {
+      store.currentSummary = null;
+      summarizing.value = true;
+      summaryStreamText.value = "";
+      try {
+        await streamSummarize(paper.id);
+      } finally {
+        summarizing.value = false;
+      }
+    }
   } catch (e) {
     ElMessage.error("上传失败: " + (e.response ? e.response.data.detail : e.message));
+  }
+}
+
+async function streamParse(paperId) {
+  try {
+    const response = await fetch("/api/papers/" + paperId + "/parse", { method: "POST" });
+    if (!response.ok) {
+      delete parseProgressMap[paperId];
+      const err = await response.text();
+      throw new Error(err);
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) {
+        if (line.startsWith("data: ")) {
+          const data = line.slice(6);
+          if (data === "[DONE]") {
+            delete parseProgressMap[paperId];
+            return;
+          }
+          try {
+            const event = JSON.parse(data);
+            if (event.stage === "error") {
+              delete parseProgressMap[paperId];
+              throw new Error(event.message);
+            }
+            if (parseProgressMap[paperId]) {
+              parseProgressMap[paperId].progress = event.progress || parseProgressMap[paperId].progress;
+              parseProgressMap[paperId].message = event.message || parseProgressMap[paperId].message;
+            }
+            if (event.stage === "done") {
+              setTimeout(() => { delete parseProgressMap[paperId]; }, 2000);
+            }
+          } catch (e) {
+            if (e.message && !e.message.includes("JSON")) {
+              delete parseProgressMap[paperId];
+              ElMessage.error("MinerU 解析失败: " + e.message);
+              throw e;
+            }
+          }
+        }
+      }
+    }
+  } catch (e) {
+    delete parseProgressMap[paperId];
+    if (e.message && !e.message.includes("JSON")) {
+      ElMessage.error("MinerU 解析失败: " + e.message);
+    }
+    await store.fetchList();
   }
 }
 
@@ -176,13 +254,11 @@ async function streamSummarize(paperId) {
         if (line.startsWith("data: ")) {
           const data = line.slice(6);
           if (data === "[DONE]") {
-            // Streaming finished, fetch the parsed summary
             await store.fetchSummary(paperId);
             summaryStreamText.value = '';
             return;
           }
           if (data.startsWith("__CACHED__")) {
-            // Already cached, use directly
             try {
               const cached = JSON.parse(data.slice(10));
               store.currentSummary = cached;
@@ -205,7 +281,7 @@ async function streamSummarize(paperId) {
 .paper-layout { display: flex; height: 100vh; overflow: hidden; gap: 12px; padding: 12px; background: var(--bg-primary); }
 .paper-sidebar { width: 260px; min-width: 260px; flex-shrink: 0; background: var(--bg-card); border-radius: var(--radius-lg); box-shadow: var(--shadow-card); display: flex; flex-direction: column; overflow: hidden; transition: box-shadow var(--transition-base); }
 .paper-sidebar:hover { box-shadow: var(--shadow-md); }
-.paper-main { flex: 1; min-width: 0; background: var(--bg-card); border-radius: var(--radius-lg); box-shadow: var(--shadow-card); overflow: hidden; transition: box-shadow var(--transition-base); }
+.paper-main { flex: 1; min-width: 0; background: var(--bg-card); border-radius: var(--radius-lg); box-shadow: var(--shadow-card); overflow: hidden; display: flex; flex-direction: column; transition: box-shadow var(--transition-base); }
 .paper-main:hover { box-shadow: var(--shadow-md); }
 .paper-chat-panel { flex-shrink: 0; background: var(--bg-card); border-radius: var(--radius-lg); box-shadow: var(--shadow-card); display: flex; flex-direction: column; overflow: hidden; transition: box-shadow var(--transition-base); }
 .paper-chat-panel:hover { box-shadow: var(--shadow-md); }
@@ -220,3 +296,5 @@ async function streamSummarize(paperId) {
 .empty-title { font-size: var(--font-size-lg); font-weight: 600; color: var(--text-primary); margin-bottom: var(--space-xs); }
 .empty-desc { font-size: var(--font-size-sm); color: var(--text-tertiary); max-width: 240px; line-height: 1.6; }
 </style>
+
+

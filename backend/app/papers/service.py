@@ -1,4 +1,4 @@
-﻿import json
+import json
 import traceback
 from openai import AsyncOpenAI
 from app.config import get_settings

@@ -1,6 +1,5 @@
-﻿from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, delete
-from sqlalchemy.orm import selectinload
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func, delete, insert
 from app.papers.model import Paper, Folder, Tag, paper_tags, Summary, Conversation, Extraction
 
 
@@ -8,8 +7,7 @@ from app.papers.model import Paper, Folder, Tag, paper_tags, Summary, Conversati
 MAX_FOLDER_DEPTH = 3
 
 
-async def _get_folder_depth(db: AsyncSession, parent_id: int) -> int:
-    """返回从根到 parent 的深度（根深度=0），parent_id=None 则深度=0"""
+async def _get_folder_depth(db: AsyncSession, parent_id: str) -> int:
     depth = 0
     current_id = parent_id
     while current_id is not None:
@@ -23,8 +21,19 @@ async def _get_folder_depth(db: AsyncSession, parent_id: int) -> int:
     return depth
 
 
-async def get_folder(db: AsyncSession, folder_id: int) -> Folder | None:
+async def get_folder(db: AsyncSession, folder_id: str) -> Folder | None:
     return await db.get(Folder, folder_id)
+
+
+async def _get_child_folder_ids(db: AsyncSession, folder_id: str) -> list[str]:
+    """Recursively collect all descendant folder ids."""
+    ids = [folder_id]
+    children_result = await db.execute(
+        select(Folder.id).where(Folder.parent_id == folder_id)
+    )
+    for (child_id,) in children_result.fetchall():
+        ids.extend(await _get_child_folder_ids(db, child_id))
+    return ids
 
 
 # ── Folder CRUD ──
@@ -35,47 +44,36 @@ async def get_uncategorized_count(db: AsyncSession) -> int:
 
 
 async def get_folders(db: AsyncSession) -> list[dict]:
-    result = await db.execute(
-        select(Folder).options(selectinload(Folder.children)).order_by(Folder.created_at.asc())
-    )
-    folders = list(result.unique().scalars().all())
+    result = await db.execute(select(Folder).order_by(Folder.created_at.asc()))
+    folders = list(result.scalars().all())
 
+    # Preload all paper counts per folder
     paper_counts = {}
-
-    async def count_papers(folder):
-        if folder.id in paper_counts:
-            return paper_counts[folder.id]
+    all_folders = {f.id: f for f in folders}
+    for f in folders:
+        # Count papers directly in this folder plus children
+        descendant_ids = await _get_child_folder_ids(db, f.id)
         cnt_result = await db.execute(
-            select(func.count(Paper.id)).where(Paper.folder_id == folder.id)
+            select(func.count(Paper.id)).where(Paper.folder_id.in_(descendant_ids))
         )
-        cnt = cnt_result.scalar() or 0
-        for child in folder.children:
-            cnt += await count_papers(child)
-        paper_counts[folder.id] = cnt
-        return cnt
+        paper_counts[f.id] = cnt_result.scalar() or 0
 
     def build_tree(parent_id=None):
         nodes = []
         for f in folders:
             if f.parent_id == parent_id:
-                cnt = paper_counts.get(f.id, 0)
                 nodes.append({
-                    "id": f.id,
-                    "name": f.name,
-                    "parent_id": f.parent_id,
-                    "paper_count": cnt,
+                    "id": f.id, "name": f.name, "parent_id": f.parent_id,
+                    "paper_count": paper_counts.get(f.id, 0),
                     "children": build_tree(f.id),
                     "created_at": f.created_at,
                 })
         return nodes
 
-    for f in folders:
-        await count_papers(f)
-
     return build_tree(None)
 
 
-async def create_folder(db: AsyncSession, name: str, parent_id: int | None = None) -> Folder:
+async def create_folder(db: AsyncSession, name: str, parent_id: str | None = None) -> Folder:
     if parent_id is not None:
         depth = await _get_folder_depth(db, parent_id)
         if depth >= MAX_FOLDER_DEPTH:
@@ -90,7 +88,7 @@ async def create_folder(db: AsyncSession, name: str, parent_id: int | None = Non
     return folder
 
 
-async def update_folder(db: AsyncSession, folder_id: int, name: str) -> Folder | None:
+async def update_folder(db: AsyncSession, folder_id: str, name: str) -> Folder | None:
     folder = await db.get(Folder, folder_id)
     if folder:
         folder.name = name
@@ -99,11 +97,32 @@ async def update_folder(db: AsyncSession, folder_id: int, name: str) -> Folder |
     return folder
 
 
-async def delete_folder(db: AsyncSession, folder_id: int) -> bool:
+async def delete_folder(db: AsyncSession, folder_id: str) -> bool:
     folder = await db.get(Folder, folder_id)
     if not folder:
         return False
-    await db.delete(folder)
+
+    # Collect all descendant folder ids + self
+    all_folder_ids = await _get_child_folder_ids(db, folder_id)
+
+    # Find all papers in these folders
+    paper_result = await db.execute(
+        select(Paper.id).where(Paper.folder_id.in_(all_folder_ids))
+    )
+    paper_ids = [row[0] for row in paper_result.fetchall()]
+
+    # Delete children: paper_tags, extractions, conversations, summaries, papers
+    if paper_ids:
+        await db.execute(delete(paper_tags).where(paper_tags.c.paper_id.in_(paper_ids)))
+        await db.execute(delete(Extraction).where(Extraction.paper_id.in_(paper_ids)))
+        await db.execute(delete(Conversation).where(Conversation.paper_id.in_(paper_ids)))
+        await db.execute(delete(Summary).where(Summary.paper_id.in_(paper_ids)))
+        await db.execute(delete(Paper).where(Paper.id.in_(paper_ids)))
+
+    # Delete child folders (bottom-up)
+    for fid in reversed(all_folder_ids):
+        await db.execute(delete(Folder).where(Folder.id == fid))
+
     await db.commit()
     return True
 
@@ -130,20 +149,21 @@ async def create_tag(db: AsyncSession, name: str) -> Tag:
     return tag
 
 
-async def delete_tag(db: AsyncSession, tag_id: int) -> bool:
+async def delete_tag(db: AsyncSession, tag_id: str) -> bool:
     tag = await db.get(Tag, tag_id)
     if not tag:
         return False
+    await db.execute(delete(paper_tags).where(paper_tags.c.tag_id == tag_id))
     await db.delete(tag)
     await db.commit()
     return True
 
 
-# ── Paper CRUD (modified) ──
+# ── Paper CRUD ──
 async def create_paper(
     db: AsyncSession, title: str, filename: str,
-    md_path: str, json_path: str, md_content: str,
-    folder_id: int | None = None, pdf_path: str = "",
+    pdf_path: str = "", folder_id: str | None = None,
+    md_path: str = "", json_path: str = "", md_content: str = "",
 ) -> Paper:
     paper = Paper(
         title=title, filename=filename,
@@ -159,15 +179,15 @@ async def create_paper(
 
 async def get_papers(
     db: AsyncSession, page: int = 1, page_size: int = 20,
-    keyword: str = "", folder_id: int | None = None, tag: str = "",
+    keyword: str = "", folder_id: str | None = None, tag: str = "",
 ) -> tuple[list[Paper], int]:
-    q = select(Paper).options(selectinload(Paper.tags), selectinload(Paper.folder))
+    q = select(Paper)
     count_q = select(func.count(Paper.id))
 
     if keyword:
         q = q.where(Paper.title.contains(keyword))
         count_q = count_q.where(Paper.title.contains(keyword))
-    if folder_id == -1:
+    if folder_id == "-1":
         q = q.where(Paper.folder_id == None)
         count_q = count_q.where(Paper.folder_id == None)
     elif folder_id is not None:
@@ -184,68 +204,82 @@ async def get_papers(
     total = total_result.scalar()
 
     result = await db.execute(q)
-    papers = list(result.unique().scalars().all())
+    papers = list(result.scalars().all())
     return papers, total
 
 
-async def get_paper(db: AsyncSession, paper_id: int) -> Paper | None:
+async def _get_paper_tags(db: AsyncSession, paper_id: str) -> list[Tag]:
     result = await db.execute(
-        select(Paper)
-        .options(selectinload(Paper.tags), selectinload(Paper.folder))
-        .where(Paper.id == paper_id)
+        select(Tag).join(paper_tags, Tag.id == paper_tags.c.tag_id)
+        .where(paper_tags.c.paper_id == paper_id)
     )
-    return result.unique().scalar_one_or_none()
+    return list(result.scalars().all())
 
 
-async def update_paper_title(db: AsyncSession, paper_id: int, title: str) -> Paper | None:
-    paper = await get_paper(db, paper_id)
+async def _get_paper_folder(db: AsyncSession, folder_id: str | None) -> Folder | None:
+    if folder_id is None:
+        return None
+    return await db.get(Folder, folder_id)
+
+
+async def get_paper(db: AsyncSession, paper_id: str) -> Paper | None:
+    return await db.get(Paper, paper_id)
+
+
+async def update_paper_title(db: AsyncSession, paper_id: str, title: str) -> Paper | None:
+    paper = await db.get(Paper, paper_id)
     if paper:
         paper.title = title
         await db.commit()
-        paper = await get_paper(db, paper_id)
+        await db.refresh(paper)
     return paper
 
 
-async def move_paper(db: AsyncSession, paper_id: int, folder_id: int | None) -> Paper | None:
-    paper = await get_paper(db, paper_id)
+async def move_paper(db: AsyncSession, paper_id: str, folder_id: str | None) -> Paper | None:
+    paper = await db.get(Paper, paper_id)
     if not paper:
         return None
-    # validate folder exists if not moving to uncategorized
     if folder_id is not None:
         folder = await db.get(Folder, folder_id)
         if not folder:
-            raise ValueError('目标文件夹不存在')
+            raise ValueError("目标文件夹不存在")
     paper.folder_id = folder_id
     await db.commit()
-    paper = await get_paper(db, paper_id)
+    await db.refresh(paper)
     return paper
 
 
-async def delete_paper(db: AsyncSession, paper_id: int) -> bool:
-    paper = await get_paper(db, paper_id)
-    if paper:
-        await db.delete(paper)
-        await db.commit()
-        return True
-    return False
+async def delete_paper(db: AsyncSession, paper_id: str) -> bool:
+    paper = await db.get(Paper, paper_id)
+    if not paper:
+        return False
+    # Manual cascade
+    await db.execute(delete(paper_tags).where(paper_tags.c.paper_id == paper_id))
+    await db.execute(delete(Extraction).where(Extraction.paper_id == paper_id))
+    await db.execute(delete(Conversation).where(Conversation.paper_id == paper_id))
+    await db.execute(delete(Summary).where(Summary.paper_id == paper_id))
+    await db.delete(paper)
+    await db.commit()
+    return True
 
 
-async def set_paper_tags(db: AsyncSession, paper_id: int, tag_ids: list[int]) -> Paper | None:
-    paper = await get_paper(db, paper_id)
+async def set_paper_tags(db: AsyncSession, paper_id: str, tag_ids: list[str]) -> Paper | None:
+    paper = await db.get(Paper, paper_id)
     if not paper:
         return None
-    if tag_ids:
-        tag_result = await db.execute(select(Tag).where(Tag.id.in_(tag_ids)))
-        paper.tags = list(tag_result.scalars().all())
-    else:
-        paper.tags = []
+    # Delete existing tags
+    await db.execute(delete(paper_tags).where(paper_tags.c.paper_id == paper_id))
+    # Insert new tags
+    for tid in tag_ids:
+        await db.execute(
+            insert(paper_tags).values(paper_id=paper_id, tag_id=tid).prefix_with("IGNORE")
+        )
     await db.commit()
-    paper = await get_paper(db, paper_id)
     return paper
 
 
 # ── Summary ──
-async def create_summary(db: AsyncSession, paper_id: int, **kwargs) -> Summary:
+async def create_summary(db: AsyncSession, paper_id: str, **kwargs) -> Summary:
     summary = Summary(paper_id=paper_id, **kwargs)
     db.add(summary)
     await db.commit()
@@ -253,20 +287,16 @@ async def create_summary(db: AsyncSession, paper_id: int, **kwargs) -> Summary:
     return summary
 
 
-async def get_summary(db: AsyncSession, paper_id: int) -> Summary | None:
+async def get_summary(db: AsyncSession, paper_id: str) -> Summary | None:
     result = await db.execute(
-        select(Summary).where(Summary.paper_id == paper_id).order_by(Summary.created_at.desc()).limit(1)
+        select(Summary).where(Summary.paper_id == paper_id)
+        .order_by(Summary.created_at.desc()).limit(1)
     )
     return result.scalar_one_or_none()
 
 
-async def delete_summaries_for_paper(db: AsyncSession, paper_id: int):
-    await db.execute(delete(Summary).where(Summary.paper_id == paper_id))
-    await db.commit()
-
-
 # ── Conversation ──
-async def add_conversation(db: AsyncSession, paper_id: int, role: str, content: str, tokens: int = 0) -> Conversation:
+async def add_conversation(db: AsyncSession, paper_id: str, role: str, content: str, tokens: int = 0) -> Conversation:
     conv = Conversation(paper_id=paper_id, role=role, content=content, tokens=tokens)
     db.add(conv)
     await db.commit()
@@ -274,18 +304,17 @@ async def add_conversation(db: AsyncSession, paper_id: int, role: str, content: 
     return conv
 
 
-async def get_conversations(db: AsyncSession, paper_id: int, limit: int = 50) -> list[Conversation]:
+async def get_conversations(db: AsyncSession, paper_id: str, limit: int = 50) -> list[Conversation]:
     result = await db.execute(
-        select(Conversation)
-        .where(Conversation.paper_id == paper_id)
-        .order_by(Conversation.created_at.desc())
-        .limit(limit)
+        select(Conversation).where(Conversation.paper_id == paper_id)
+        .order_by(Conversation.created_at.desc()).limit(limit)
     )
     return list(result.scalars().all())
 
 
 # ── Extraction ──
-async def save_extractions(db: AsyncSession, paper_id: int, results: list[dict]) -> list[Extraction]:
+async def save_extractions(db: AsyncSession, paper_id: str, results: list[dict]) -> list[Extraction]:
+    await db.execute(delete(Extraction).where(Extraction.paper_id == paper_id))
     objs = []
     for item in results:
         obj = Extraction(paper_id=paper_id, type=item["type"], content=item["content"])
@@ -297,13 +326,15 @@ async def save_extractions(db: AsyncSession, paper_id: int, results: list[dict])
     return objs
 
 
-async def get_extractions(db: AsyncSession, paper_id: int) -> list[Extraction]:
+async def get_extractions(db: AsyncSession, paper_id: str) -> list[Extraction]:
     result = await db.execute(select(Extraction).where(Extraction.paper_id == paper_id))
     return list(result.scalars().all())
 
 
 # ── Helper ──
-def paper_to_response(paper: Paper) -> dict:
+async def paper_to_response(db: AsyncSession, paper: Paper) -> dict:
+    tags = await _get_paper_tags(db, paper.id)
+    folder = await _get_paper_folder(db, paper.folder_id)
     return {
         "id": paper.id,
         "title": paper.title,
@@ -313,7 +344,7 @@ def paper_to_response(paper: Paper) -> dict:
         "pdf_path": paper.pdf_path or "",
         "status": paper.status,
         "folder_id": paper.folder_id,
-        "folder_name": paper.folder.name if paper.folder else None,
-        "tags": [{"id": t.id, "name": t.name} for t in (paper.tags or [])],
+        "folder_name": folder.name if folder else None,
+        "tags": [{"id": t.id, "name": t.name} for t in tags],
         "created_at": paper.created_at,
     }

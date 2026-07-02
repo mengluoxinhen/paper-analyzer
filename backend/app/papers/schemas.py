@@ -1,11 +1,11 @@
-﻿from datetime import datetime
+from datetime import datetime
 from pydantic import BaseModel
 
 
 # ── Folder ──
 class FolderCreate(BaseModel):
     name: str
-    parent_id: int | None = None
+    parent_id: str | None = None
 
 
 class FolderListResponse(BaseModel):
@@ -14,9 +14,9 @@ class FolderListResponse(BaseModel):
 
 
 class FolderResponse(BaseModel):
-    id: int
+    id: str
     name: str
-    parent_id: int | None = None
+    parent_id: str | None = None
     paper_count: int = 0
     children: list["FolderResponse"] = []
     created_at: datetime
@@ -29,7 +29,7 @@ class TagCreate(BaseModel):
 
 
 class TagResponse(BaseModel):
-    id: int
+    id: str
     name: str
     paper_count: int = 0
     created_at: datetime
@@ -42,20 +42,20 @@ class PaperCreate(BaseModel):
 
 
 class TagItem(BaseModel):
-    id: int
+    id: str
     name: str
     model_config = {"from_attributes": True}
 
 
 class PaperResponse(BaseModel):
-    id: int
+    id: str
     title: str
     filename: str
     md_path: str
     json_path: str
     pdf_path: str = ""
     status: str
-    folder_id: int | None = None
+    folder_id: str | None = None
     folder_name: str | None = None
     tags: list[TagItem] = []
     created_at: datetime
@@ -73,17 +73,18 @@ class PaperListResponse(BaseModel):
 
 
 class PaperMoveRequest(BaseModel):
-    folder_id: int | None = None  # None means move to uncategorized
+    folder_id: str | None = None
 
 
 class PaperTagUpdate(BaseModel):
-    tag_ids: list[int] = []
+    tag_ids: list[str] = []
+
 
 
 # ── Summary ──
 class SummaryResponse(BaseModel):
-    id: int
-    paper_id: int
+    id: str
+    paper_id: str
     problem: str = ""
     conclusion: str = ""
     conditions: str = ""
@@ -96,8 +97,8 @@ class SummaryResponse(BaseModel):
 
 # ── Conversation ──
 class ConversationResponse(BaseModel):
-    id: int
-    paper_id: int
+    id: str
+    paper_id: str
     role: str
     content: str
     tokens: int
@@ -110,7 +111,7 @@ class ChatRequest(BaseModel):
 
 
 class CompareRequest(BaseModel):
-    paper_ids: list[int]
+    paper_ids: list[str]
 
 
 class ExtractRequest(BaseModel):
@@ -118,8 +119,8 @@ class ExtractRequest(BaseModel):
 
 
 class ExtractionResponse(BaseModel):
-    id: int
-    paper_id: int
+    id: str
+    paper_id: str
     type: str
     content: dict
     created_at: datetime

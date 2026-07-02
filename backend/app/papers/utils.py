@@ -1,5 +1,4 @@
 import os
-import json
 from app.config import get_settings
 
 settings = get_settings()
@@ -15,10 +14,6 @@ def read_file_content(filepath: str) -> str:
     with open(filepath, "r", encoding="utf-8") as f:
         return f.read()
 
-
-def parse_json_content(filepath: str) -> dict:
-    with open(filepath, "r", encoding="utf-8") as f:
-        return json.load(f)
 
 
 def count_tokens_approx(text: str) -> int:

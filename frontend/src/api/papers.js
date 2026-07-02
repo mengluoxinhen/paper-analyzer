@@ -1,13 +1,14 @@
 ﻿import http from "./index";
 
-export function uploadPaper(title, pdfFile, mdFile, folderId) {
+export function uploadPaper(title, pdfFile, folderId) {
   const form = new FormData();
   if (pdfFile) form.append("pdf_file", pdfFile);
-  if (mdFile) form.append("md_file", mdFile);
+  
   let url = "/papers/upload?title=" + encodeURIComponent(title);
   if (folderId != null) url += "&folder_id=" + folderId;
   return http.post(url, form);
 }
+
 
 export function getPapers(params) {
   return http.get("/papers", { params });
@@ -74,3 +75,5 @@ export function createTag(name) {
 export function deleteTag(id) {
   return http.delete("/tags/" + id);
 }
+
+

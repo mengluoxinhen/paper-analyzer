@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="chat">
     <div class="chat-header">
       <h4>论文对话</h4>
@@ -154,7 +154,7 @@ async function sendMessage() {
       for (const line of lines) {
         if (line.startsWith("data: ")) {
           const data = line.slice(6);
-          if (data === "[DONE]") { streamLoading.value = false; streamText.value = ""; return; }
+          if (data === "[DONE]") { if (streamText.value) { messages.value.push({ role: "assistant", content: streamText.value }); } streamLoading.value = false; streamText.value = ""; scrollToBottom(); return; }
           streamText.value += data;
           scrollToBottom();
         }
@@ -193,7 +193,7 @@ async function sendMessage() {
 .chat-empty { display: flex; align-items: center; justify-content: center; flex: 1; }
 .empty-text { font-size: var(--font-size-sm); color: var(--text-tertiary); }
 
-.chat-message { display: flex; gap: var(--space-md); animation: msgIn 0.25s ease; }
+.chat-message { display: flex; gap: var(--space-md); margin-bottom: 16px; animation: msgIn 0.25s ease; }
 @keyframes msgIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 .chat-message.user { flex-direction: row-reverse; }
 .msg-avatar { width: 30px; height: 30px; border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; flex-shrink: 0; }
@@ -236,3 +236,4 @@ async function sendMessage() {
 .streaming-text :deep(.math-inline) { font-family: var(--font-mono); background: rgba(91,95,227,0.06); padding: 1px 4px; border-radius: 3px; font-style: italic; color: var(--accent); }
 .conditions-table :deep(.math-inline) { font-family: var(--font-mono); background: rgba(91,95,227,0.06); padding: 1px 4px; border-radius: 3px; font-style: italic; color: var(--accent); }
 </style>
+

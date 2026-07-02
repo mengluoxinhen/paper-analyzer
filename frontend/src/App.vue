@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <router-view />
 </template>
 
@@ -9,7 +9,6 @@
   --bg-card: #ffffff;
   --bg-hover: #f8f8fa;
   --bg-active: #f0f0f5;
-  --bg-glass: rgba(255, 255, 255, 0.72);
 
   --text-primary: #1d1d1f;
   --text-secondary: #86868b;
@@ -19,7 +18,6 @@
   --border-light: rgba(0, 0, 0, 0.04);
   --border-medium: rgba(0, 0, 0, 0.08);
 
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
   --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.06);
   --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.08);
   --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.06);
@@ -40,18 +38,15 @@
   --font-size-base: 14px;
   --font-size-md: 15px;
   --font-size-lg: 17px;
-  --font-size-xl: 20px;
 
   --space-xs: 4px;
   --space-sm: 8px;
   --space-md: 12px;
   --space-lg: 16px;
   --space-xl: 20px;
-  --space-2xl: 24px;
 
   --transition-fast: 0.15s ease;
   --transition-base: 0.2s ease;
-  --transition-slow: 0.3s ease;
 }
 
 /* ===== 全局 Reset ===== */
@@ -195,12 +190,6 @@ html, body, #app {
 }
 .el-dialog__footer {
   padding: 0 var(--space-xl) var(--space-xl) var(--space-xl);
-}
-
-/* 空状态 */
-.el-empty__description {
-  margin-top: var(--space-md);
-  color: var(--text-tertiary);
 }
 
 /* Upload */
