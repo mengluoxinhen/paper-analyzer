@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.deps import DBSession
-from app.papers import crud as papers_crud, service as papers_service, utils as papers_utils
+from app.papers import crud as papers_crud, utils as papers_utils
 from app.papers.model import Paper
 from app.qa.chat_crud import (
     create_chat_session, get_chat_sessions, get_chat_session,
@@ -17,6 +17,17 @@ from app.qa.chat_schemas import (
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
+# ── Markdown output format instruction (reused across prompts) ──
+
+_MD_FORMAT = """
+【输出格式】只输出纯 Markdown 源码，不要添加任何开场白、过渡语、总结语。严格遵循以下规则：
+
+- 标题（##、###）独占一行，标题与正文之间用空行分隔
+- 用 **粗体** 强调关键概念、数值、方法
+- 列表用 - 开头，子项缩进2空格
+- 表格对齐，表头与表体用 | --- | 分隔
+- 不要输出"好的""以下是回答""总结一下"等废话
+"""
 
 # ── Session management ──
 
@@ -91,20 +102,15 @@ async def send_message(session_id: str, body: ChatSendRequest, db: AsyncSession 
     if not message:
         raise HTTPException(400, "消息不能为空")
 
-    # Auto-title: use first user message as session title
     if session.title == "新对话" or not session.title:
         title = message[:60] + ("..." if len(message) > 60 else "")
         await update_chat_session_title(db, session_id, title)
 
-    # Save user message
     user_tokens = papers_utils.count_tokens_approx(message)
     await add_chat_message(db, session_id, "user", message, user_tokens)
 
-    # Load history (already in chronological order from get_chat_messages reversed)
     history_msgs = await get_chat_messages(db, session_id)
-    # history_msgs is newest-first; reverse for chronological order, then exclude last (just inserted user msg)
     history = [{"role": m.role, "content": m.content} for m in reversed(history_msgs)]
-    # history now has user msg as last element; remove it for the prompt context
     history_for_prompt = history[:-1] if len(history) > 1 else []
 
     paper_id = session.paper_id
@@ -115,29 +121,31 @@ async def send_message(session_id: str, body: ChatSendRequest, db: AsyncSession 
 
         cfg = await _get_llm_config(db)
         client = AsyncOpenAI(api_key=cfg["api_key"], base_url=cfg["api_base"])
+        full_text = ""
 
         if paper_id:
-            # Paper chat: use paper content as context
+            # ── Paper chat ──
             paper = await papers_crud.get_paper(db, paper_id)
             if not paper or not paper.md_content:
                 yield f"data: __ERROR__论文不存在或未解析\n\n".encode("utf-8")
                 return
 
             content = paper.md_content
-            # Build prompt with paper content + history + current question
-            system_prompt = "你是一个专业的学术论文问答助手。请根据以下论文内容回答用户的问题。回答要专业、准确、结构清晰。使用 Markdown 格式。"
-            messages = [{"role": "system", "content": system_prompt}]
-            messages.append({"role": "user", "content": f"以下是论文全文内容：\n\n{content[:30000]}"})
-            # Add history
-            for h in history_for_prompt[-10:]:
-                messages.append(h)
-            messages.append({"role": "user", "content": message})
 
-            full_text = ""
+            system_prompt = (
+                "你是一个专业的学术论文问答助手。请严格根据以下论文内容回答用户问题。"
+                + _MD_FORMAT
+            )
+            msgs = [{"role": "system", "content": system_prompt}]
+            msgs.append({"role": "user", "content": f"以下是论文全文内容：\n\n{content[:30000]}"})
+            for h in history_for_prompt[-10:]:
+                msgs.append(h)
+            msgs.append({"role": "user", "content": message})
+
             try:
                 stream = await client.chat.completions.create(
                     model=cfg["model"],
-                    messages=messages,
+                    messages=msgs,
                     max_tokens=cfg.get("max_tokens", 2048),
                     temperature=cfg.get("temperature", 0.3),
                     stream=True,
@@ -151,24 +159,23 @@ async def send_message(session_id: str, body: ChatSendRequest, db: AsyncSession 
                 yield f"data: __ERROR__{str(e)}\n\n".encode("utf-8")
                 return
         else:
-            # Global chat: use RAG-based QA
-            # Use the existing QA pipeline but pass session_id
+            # ── Global chat ──
             from app.qa.router import _rewrite_query
             from app.qa import embedder, indexer
 
             search_query = await _rewrite_query(message, db)
+
             if "NOT_RELEVANT" in search_query:
-                # Fallback: just use LLM without RAG
-                system_prompt = "你是一个智能AI助手，可以回答用户的各种问题。回答要专业、准确、结构清晰。使用 Markdown 格式。"
-                messages = [{"role": "system", "content": system_prompt}]
+                # No relevant papers: plain LLM
+                system_prompt = "你是一个智能AI助手，可以回答用户的各种问题。" + _MD_FORMAT
+                msgs = [{"role": "system", "content": system_prompt}]
                 for h in history_for_prompt[-10:]:
-                    messages.append(h)
-                messages.append({"role": "user", "content": message})
-                full_text = ""
+                    msgs.append(h)
+                msgs.append({"role": "user", "content": message})
                 try:
                     stream = await client.chat.completions.create(
                         model=cfg["model"],
-                        messages=messages,
+                        messages=msgs,
                         max_tokens=cfg.get("max_tokens", 2048),
                         temperature=cfg.get("temperature", 0.3),
                         stream=True,
@@ -190,18 +197,18 @@ async def send_message(session_id: str, body: ChatSendRequest, db: AsyncSession 
                     return
 
                 chunks = indexer.search_chunks(query_emb, top_k=8)
+
                 if not chunks:
                     # Fallback to plain LLM
-                    system_prompt = "你是一个智能AI助手，可以回答用户的各种问题。回答要专业、准确、结构清晰。使用 Markdown 格式。"
-                    messages = [{"role": "system", "content": system_prompt}]
+                    system_prompt = "你是一个智能AI助手，可以回答用户的各种问题。" + _MD_FORMAT
+                    msgs = [{"role": "system", "content": system_prompt}]
                     for h in history_for_prompt[-10:]:
-                        messages.append(h)
-                    messages.append({"role": "user", "content": message})
-                    full_text = ""
+                        msgs.append(h)
+                    msgs.append({"role": "user", "content": message})
                     try:
                         stream = await client.chat.completions.create(
                             model=cfg["model"],
-                            messages=messages,
+                            messages=msgs,
                             max_tokens=cfg.get("max_tokens", 2048),
                             temperature=cfg.get("temperature", 0.3),
                             stream=True,
@@ -215,18 +222,16 @@ async def send_message(session_id: str, body: ChatSendRequest, db: AsyncSession 
                         yield f"data: __ERROR__{str(e)}\n\n".encode("utf-8")
                         return
                 else:
-                    # Build RAG prompt
+                    # RAG prompt
                     from app.qa.router import _build_qa_prompt
                     prompt = _build_qa_prompt(message, chunks)
 
-                    # Prepend history as context
                     if history_for_prompt:
                         history_text = "\n\n".join(
                             f"{h['role']}: {h['content']}" for h in history_for_prompt[-6:]
                         )
                         prompt = f"历史对话：\n{history_text}\n\n{prompt}"
 
-                    full_text = ""
                     try:
                         stream = await client.chat.completions.create(
                             model=cfg["model"],
@@ -244,7 +249,6 @@ async def send_message(session_id: str, body: ChatSendRequest, db: AsyncSession 
                         yield f"data: __ERROR__{str(e)}\n\n".encode("utf-8")
                         return
 
-        # Save assistant response
         assistant_tokens = papers_utils.count_tokens_approx(full_text)
         await add_chat_message(db, session_id, "assistant", full_text, assistant_tokens)
         yield f"data: [DONE]\n\n".encode("utf-8")
