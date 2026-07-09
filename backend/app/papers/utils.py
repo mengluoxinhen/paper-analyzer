@@ -10,11 +10,6 @@ def ensure_upload_dir(module: str = "papers") -> str:
     return path
 
 
-def read_file_content(filepath: str) -> str:
-    with open(filepath, "r", encoding="utf-8") as f:
-        return f.read()
-
-
 
 def count_tokens_approx(text: str) -> int:
     return len(text) // 3
@@ -110,6 +105,21 @@ def build_chat_system_prompt(paper_content: str) -> str:
 请根据论文内容回答用户的问题。如果问题超出论文范围，请礼貌告知。
 
 回答时请引用论文中的具体段落或数据来支撑你的观点。
+
+【输出格式】只输出纯 Markdown 源码，不要添加任何开场白、过渡语、总结语。标题独占一行，标题与正文之间用空行分隔：
+
+### 核心发现
+
+正文内容，用 **粗体** 强调关键点。
+
+### 详细分析
+
+- 子要点一
+- 子要点二
+
+| 列A | 列B |
+| --- | --- |
+| 值1 | 值2 |
 
 ---
 

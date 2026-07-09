@@ -1,5 +1,5 @@
-﻿import { defineStore } from "pinia";
-import { getPapers, getPaper, deletePaper, getSummary, getConversations } from "../api/papers";
+import { defineStore } from "pinia";
+import { getPapers, getPaper, deletePaper, getSummary } from "../api/papers";
 
 export const usePapersStore = defineStore("papers", {
   state: () => ({
@@ -7,7 +7,6 @@ export const usePapersStore = defineStore("papers", {
     total: 0,
     currentPaper: null,
     currentSummary: null,
-    conversations: [],
     loading: false,
   }),
 
@@ -35,7 +34,6 @@ export const usePapersStore = defineStore("papers", {
       if (this.currentPaper && this.currentPaper.id === id) {
         this.currentPaper = null;
         this.currentSummary = null;
-        this.conversations = [];
       }
     },
 
@@ -46,11 +44,6 @@ export const usePapersStore = defineStore("papers", {
       } catch {
         this.currentSummary = null;
       }
-    },
-
-    async fetchConversations(paperId) {
-      const res = await getConversations(paperId);
-      this.conversations = res.data || [];
     },
   },
 });

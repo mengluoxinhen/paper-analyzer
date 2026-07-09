@@ -1,0 +1,252 @@
+import json
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import StreamingResponse
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.deps import DBSession
+from app.papers import crud as papers_crud, service as papers_service, utils as papers_utils
+from app.papers.model import Paper
+from app.qa.chat_crud import (
+    create_chat_session, get_chat_sessions, get_chat_session,
+    update_chat_session_title, delete_chat_session,
+    add_chat_message, get_chat_messages,
+)
+from app.qa.chat_schemas import (
+    ChatSessionCreate, ChatSessionListResponse,
+    ChatMessageItem, ChatSendRequest, ChatSessionRename,
+)
+
+router = APIRouter(prefix="/api/chat", tags=["chat"])
+
+
+# ── Session management ──
+
+@router.get("/sessions", response_model=ChatSessionListResponse)
+async def list_sessions(
+    paper_id: str | None = Query(None, description="Filter by paper; omit for global"),
+    db: AsyncSession = DBSession,
+):
+    sessions = await get_chat_sessions(db, paper_id=paper_id)
+    return {"sessions": sessions}
+
+
+@router.post("/sessions")
+async def create_session(body: ChatSessionCreate, db: AsyncSession = DBSession):
+    session = await create_chat_session(db, title=body.title, paper_id=body.paper_id)
+    return {
+        "id": session.id,
+        "title": session.title,
+        "paper_id": session.paper_id,
+        "created_at": session.created_at.isoformat() if session.created_at else None,
+        "message_count": 0,
+        "preview": "",
+    }
+
+
+@router.put("/sessions/{session_id}")
+async def rename_session(session_id: str, body: ChatSessionRename, db: AsyncSession = DBSession):
+    session = await update_chat_session_title(db, session_id, body.title)
+    if not session:
+        raise HTTPException(404, "会话不存在")
+    return {"ok": True}
+
+
+@router.delete("/sessions/{session_id}")
+async def remove_session(session_id: str, db: AsyncSession = DBSession):
+    ok = await delete_chat_session(db, session_id)
+    if not ok:
+        raise HTTPException(404, "会话不存在")
+    return {"ok": True}
+
+
+# ── Messages ──
+
+@router.get("/sessions/{session_id}/messages")
+async def list_messages(session_id: str, db: AsyncSession = DBSession):
+    session = await get_chat_session(db, session_id)
+    if not session:
+        raise HTTPException(404, "会话不存在")
+    msgs = await get_chat_messages(db, session_id)
+    return [
+        {
+            "id": m.id,
+            "session_id": m.session_id,
+            "role": m.role,
+            "content": m.content,
+            "tokens": m.tokens,
+            "created_at": m.created_at.isoformat() if m.created_at else None,
+        }
+        for m in reversed(msgs)
+    ]
+
+
+# ── Send message (streaming) ──
+
+@router.post("/sessions/{session_id}/send")
+async def send_message(session_id: str, body: ChatSendRequest, db: AsyncSession = DBSession):
+    session = await get_chat_session(db, session_id)
+    if not session:
+        raise HTTPException(404, "会话不存在")
+
+    message = body.message.strip()
+    if not message:
+        raise HTTPException(400, "消息不能为空")
+
+    # Auto-title: use first user message as session title
+    if session.title == "新对话" or not session.title:
+        title = message[:60] + ("..." if len(message) > 60 else "")
+        await update_chat_session_title(db, session_id, title)
+
+    # Save user message
+    user_tokens = papers_utils.count_tokens_approx(message)
+    await add_chat_message(db, session_id, "user", message, user_tokens)
+
+    # Load history (already in chronological order from get_chat_messages reversed)
+    history_msgs = await get_chat_messages(db, session_id)
+    # history_msgs is newest-first; reverse for chronological order, then exclude last (just inserted user msg)
+    history = [{"role": m.role, "content": m.content} for m in reversed(history_msgs)]
+    # history now has user msg as last element; remove it for the prompt context
+    history_for_prompt = history[:-1] if len(history) > 1 else []
+
+    paper_id = session.paper_id
+
+    async def event_stream():
+        from app.papers.service import _get_llm_config
+        from openai import AsyncOpenAI
+
+        cfg = await _get_llm_config(db)
+        client = AsyncOpenAI(api_key=cfg["api_key"], base_url=cfg["api_base"])
+
+        if paper_id:
+            # Paper chat: use paper content as context
+            paper = await papers_crud.get_paper(db, paper_id)
+            if not paper or not paper.md_content:
+                yield f"data: __ERROR__论文不存在或未解析\n\n".encode("utf-8")
+                return
+
+            content = paper.md_content
+            # Build prompt with paper content + history + current question
+            system_prompt = "你是一个专业的学术论文问答助手。请根据以下论文内容回答用户的问题。回答要专业、准确、结构清晰。使用 Markdown 格式。"
+            messages = [{"role": "system", "content": system_prompt}]
+            messages.append({"role": "user", "content": f"以下是论文全文内容：\n\n{content[:30000]}"})
+            # Add history
+            for h in history_for_prompt[-10:]:
+                messages.append(h)
+            messages.append({"role": "user", "content": message})
+
+            full_text = ""
+            try:
+                stream = await client.chat.completions.create(
+                    model=cfg["model"],
+                    messages=messages,
+                    max_tokens=cfg.get("max_tokens", 2048),
+                    temperature=cfg.get("temperature", 0.3),
+                    stream=True,
+                )
+                async for chunk in stream:
+                    delta = chunk.choices[0].delta
+                    if delta.content:
+                        full_text += delta.content
+                        yield f"data: {delta.content}\n\n".encode("utf-8")
+            except Exception as e:
+                yield f"data: __ERROR__{str(e)}\n\n".encode("utf-8")
+                return
+        else:
+            # Global chat: use RAG-based QA
+            # Use the existing QA pipeline but pass session_id
+            from app.qa.router import _rewrite_query
+            from app.qa import embedder, indexer
+
+            search_query = await _rewrite_query(message, db)
+            if "NOT_RELEVANT" in search_query:
+                # Fallback: just use LLM without RAG
+                system_prompt = "你是一个智能AI助手，可以回答用户的各种问题。回答要专业、准确、结构清晰。使用 Markdown 格式。"
+                messages = [{"role": "system", "content": system_prompt}]
+                for h in history_for_prompt[-10:]:
+                    messages.append(h)
+                messages.append({"role": "user", "content": message})
+                full_text = ""
+                try:
+                    stream = await client.chat.completions.create(
+                        model=cfg["model"],
+                        messages=messages,
+                        max_tokens=cfg.get("max_tokens", 2048),
+                        temperature=cfg.get("temperature", 0.3),
+                        stream=True,
+                    )
+                    async for chunk in stream:
+                        delta = chunk.choices[0].delta
+                        if delta.content:
+                            full_text += delta.content
+                            yield f"data: {delta.content}\n\n".encode("utf-8")
+                except Exception as e:
+                    yield f"data: __ERROR__{str(e)}\n\n".encode("utf-8")
+                    return
+            else:
+                # RAG-based response
+                try:
+                    query_emb = await embedder.get_embedding(search_query)
+                except Exception as e:
+                    yield f"data: __ERROR__Embedding 请求失败: {e}\n\n".encode("utf-8")
+                    return
+
+                chunks = indexer.search_chunks(query_emb, top_k=8)
+                if not chunks:
+                    # Fallback to plain LLM
+                    system_prompt = "你是一个智能AI助手，可以回答用户的各种问题。回答要专业、准确、结构清晰。使用 Markdown 格式。"
+                    messages = [{"role": "system", "content": system_prompt}]
+                    for h in history_for_prompt[-10:]:
+                        messages.append(h)
+                    messages.append({"role": "user", "content": message})
+                    full_text = ""
+                    try:
+                        stream = await client.chat.completions.create(
+                            model=cfg["model"],
+                            messages=messages,
+                            max_tokens=cfg.get("max_tokens", 2048),
+                            temperature=cfg.get("temperature", 0.3),
+                            stream=True,
+                        )
+                        async for chunk in stream:
+                            delta = chunk.choices[0].delta
+                            if delta.content:
+                                full_text += delta.content
+                                yield f"data: {delta.content}\n\n".encode("utf-8")
+                    except Exception as e:
+                        yield f"data: __ERROR__{str(e)}\n\n".encode("utf-8")
+                        return
+                else:
+                    # Build RAG prompt
+                    from app.qa.router import _build_qa_prompt
+                    prompt = _build_qa_prompt(message, chunks)
+
+                    # Prepend history as context
+                    if history_for_prompt:
+                        history_text = "\n\n".join(
+                            f"{h['role']}: {h['content']}" for h in history_for_prompt[-6:]
+                        )
+                        prompt = f"历史对话：\n{history_text}\n\n{prompt}"
+
+                    full_text = ""
+                    try:
+                        stream = await client.chat.completions.create(
+                            model=cfg["model"],
+                            messages=[{"role": "user", "content": prompt}],
+                            max_tokens=cfg.get("max_tokens", 2048),
+                            temperature=cfg.get("temperature", 0.3),
+                            stream=True,
+                        )
+                        async for chunk in stream:
+                            delta = chunk.choices[0].delta
+                            if delta.content:
+                                full_text += delta.content
+                                yield f"data: {delta.content}\n\n".encode("utf-8")
+                    except Exception as e:
+                        yield f"data: __ERROR__{str(e)}\n\n".encode("utf-8")
+                        return
+
+        # Save assistant response
+        assistant_tokens = papers_utils.count_tokens_approx(full_text)
+        await add_chat_message(db, session_id, "assistant", full_text, assistant_tokens)
+        yield f"data: [DONE]\n\n".encode("utf-8")
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")

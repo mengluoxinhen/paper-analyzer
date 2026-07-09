@@ -1,4 +1,4 @@
-﻿import http from "./index";
+﻿import http from "./index.js";
 
 export function uploadPaper(title, pdfFile, folderId) {
   const form = new FormData();
@@ -27,7 +27,7 @@ export function deletePaper(id) {
 }
 
 export function movePaper(id, folderId) {
-  return http.put('/papers/' + id + '/move', { folder_id: folderId });
+  return http.put("/papers/" + id + "/move", { folder_id: folderId });
 }
 
 export function setPaperTags(id, tagIds) {
@@ -36,10 +36,6 @@ export function setPaperTags(id, tagIds) {
 
 export function getSummary(paperId) {
   return http.get("/papers/" + paperId + "/summary");
-}
-
-export function getConversations(paperId, limit) {
-  return http.get("/papers/" + paperId + "/conversations", { params: { limit: limit || 50 } });
 }
 
 export function getExtractions(paperId) {
@@ -75,5 +71,3 @@ export function createTag(name) {
 export function deleteTag(id) {
   return http.delete("/tags/" + id);
 }
-
-

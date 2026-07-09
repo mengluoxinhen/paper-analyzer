@@ -37,3 +37,9 @@ backend/uploads/*
 
 # Test / temp scripts
 backend/_*.py
+
+# Local ML models
+models/
+
+# ChromaDB vector store
+chroma_data/

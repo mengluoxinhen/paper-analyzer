@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="paper-layout">
     <aside class="paper-sidebar">
       <PaperLibrary
@@ -34,8 +34,8 @@
     <aside class="paper-chat-panel" :style="chatPanelStyle">
       <PaperChat
         v-if="store.currentPaper"
+        :key="store.currentPaper.id"
         :paperId="store.currentPaper.id"
-        :conversations="store.conversations"
         :summary="store.currentSummary"
         :summarizing="summarizing"
         :summaryStream="summaryStreamText"
@@ -63,10 +63,10 @@ import SettingsDialog from "../settings/SettingsDialog.vue";
 
 const store = usePapersStore();
 const settingsVisible = ref(false);
-const chatWidth = ref(380);
+const chatWidth = ref(520);
 const resizing = ref(false);
-const MIN_CHAT = 280;
-const MAX_CHAT = 600;
+const MIN_CHAT = 400;
+const MAX_CHAT = 720;
 const MIN_MAIN = 100;
 const libraryRef = ref(null);
 const summarizing = ref(false);
@@ -107,9 +107,7 @@ onMounted(() => { store.fetchList(); });
 
 async function handleSelect(paper) {
   store.currentPaper = await store.fetchPaper(paper.id);
-  store.conversations = [];
   summaryStreamText.value = '';
-  await store.fetchConversations(paper.id);
   await store.fetchSummary(paper.id);
   if (store.currentSummary) return;
   if (store.currentPaper.status === 'parsed' && store.currentPaper.md_content) {
@@ -140,46 +138,35 @@ async function handleRegenerate() {
   }
 }
 
-async function handleDelete(paper) {
-  await store.removePaper(paper.id);
+async function handleDelete(id) {
+  await store.removePaper(id);
   ElMessage.success("论文已删除");
 }
 
-async function handleUpload({ title, pdfFile, folderId }) {
+async function handleUpload(title, pdfFile, folderId) {
   try {
     const res = await uploadPaper(title, pdfFile, folderId);
-    const paper = res.data;
-    ElMessage.success("上传成功，正在提交 MinerU 解析...");
+    ElMessage.success("上传成功");
     await store.fetchList();
 
-    parseProgressMap[paper.id] = { progress: 0, message: "正在提交..." };
-    await streamParse(paper.id);
-
-    ElMessage.success("MinerU 解析完成");
-    await store.fetchList();
-
-    // 自动选中新上传的论文并触发总结
-    store.currentPaper = await store.fetchPaper(paper.id);
-    if (store.currentPaper.md_content) {
-      store.currentSummary = null;
-      summarizing.value = true;
-      summaryStreamText.value = "";
-      try {
-        await streamSummarize(paper.id);
-      } finally {
-        summarizing.value = false;
-      }
+    // Auto-trigger MinerU parsing with progress tracking
+    const paperId = res.data.id;
+    parseProgressMap[paperId] = { progress: 0, message: '准备解析...' };
+    try {
+      await triggerParse(paperId);
+    } catch {
+      delete parseProgressMap[paperId];
     }
+    await store.fetchList();
   } catch (e) {
-    ElMessage.error("上传失败: " + (e.response ? e.response.data.detail : e.message));
+    ElMessage.error("上传失败：" + (e?.response?.data?.detail || e.message));
   }
 }
 
-async function streamParse(paperId) {
+async function triggerParse(paperId) {
   try {
     const response = await fetch("/api/papers/" + paperId + "/parse", { method: "POST" });
     if (!response.ok) {
-      delete parseProgressMap[paperId];
       const err = await response.text();
       throw new Error(err);
     }
@@ -296,5 +283,3 @@ async function streamSummarize(paperId) {
 .empty-title { font-size: var(--font-size-lg); font-weight: 600; color: var(--text-primary); margin-bottom: var(--space-xs); }
 .empty-desc { font-size: var(--font-size-sm); color: var(--text-tertiary); max-width: 240px; line-height: 1.6; }
 </style>
-
-

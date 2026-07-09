@@ -51,8 +51,6 @@ class PaperResponse(BaseModel):
     id: str
     title: str
     filename: str
-    md_path: str
-    json_path: str
     pdf_path: str = ""
     status: str
     folder_id: str | None = None

@@ -1,4 +1,4 @@
-﻿import os
+import os
 from pathlib import Path
 from functools import lru_cache
 
@@ -16,7 +16,7 @@ def _load_env():
                 continue
             key, _, value = line.partition("=")
             key = key.strip()
-            value = value.strip().strip("'\"").strip('"')
+            value = value.strip().strip(chr(39)).strip(chr(34))
             if key and value and key not in os.environ:
                 os.environ[key] = value
 
@@ -39,6 +39,11 @@ class Settings:
         self.mineru_model_version = os.getenv("MINERU_MODEL_VERSION", "vlm")
         self.mineru_poll_interval = float(os.getenv("MINERU_POLL_INTERVAL", "5.0"))
         self.mineru_poll_max_retries = int(os.getenv("MINERU_POLL_MAX_RETRIES", "60"))
+        # Embedding
+        self.embedding_api_base = os.getenv("EMBEDDING_API_BASE", self.llm_api_base)
+        self.embedding_api_key = os.getenv("EMBEDDING_API_KEY", self.llm_api_key)
+        self.embedding_model = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
+        self.qa_chroma_dir = os.path.join(str(BASE_DIR), "chroma_data")
         upload_dir = os.getenv("UPLOAD_DIR", "uploads")
         if not os.path.isabs(upload_dir):
             upload_dir = os.path.normpath(os.path.join(str(BASE_DIR), upload_dir))
@@ -48,4 +53,3 @@ class Settings:
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
-

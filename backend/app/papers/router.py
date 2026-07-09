@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.deps import DBSession
 from app.papers import schemas, crud, utils, service
 from app.papers.mineru import parse_pdf_stream, MinerUError
+from app.qa import indexer
 from app.papers.model import Paper
 
 router = APIRouter(prefix="/api/papers", tags=["papers"])
@@ -148,19 +149,19 @@ async def parse_paper(paper_id: str, db: AsyncSession = DBSession):
         async with async_session() as s:
             p = await s.get(Paper, paper_id)
             if p and md_content:
-                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                md_upload_dir = utils.ensure_upload_dir("papers")
-                safe_md = f"{ts}_{p.filename}.md"
-                md_path = os.path.join(md_upload_dir, safe_md)
-                async with aiofiles.open(md_path, "w", encoding="utf-8") as f:
-                    await f.write(md_content)
                 p.md_content = md_content
-                p.md_path = md_path
                 p.mineru_batch_id = batch_id
                 p.status = "parsed"
             elif p:
                 p.status = "parse_failed"
             await s.commit()
+
+            # Auto-index the paper for global Q&A
+            if p and md_content:
+                try:
+                    await indexer.index_paper(paper_id, p.title or p.filename, md_content)
+                except Exception:
+                    pass
 
         yield f"data: [DONE]\n\n".encode("utf-8")
 
@@ -219,7 +220,7 @@ async def delete_paper(paper_id: str, db: AsyncSession = DBSession):
         raise HTTPException(404, "论文不存在")
 
     # Remove local files
-    for p in [paper.pdf_path, paper.md_path, paper.json_path]:
+    for p in [paper.pdf_path]:
         if p and os.path.isfile(p):
             try:
                 os.unlink(p)
@@ -273,8 +274,6 @@ async def summarize_paper(paper_id: str, db: AsyncSession = DBSession):
         return StreamingResponse(cached_stream(), media_type="text/event-stream")
 
     content = paper.md_content
-    if not content and paper.md_path:
-        content = utils.read_file_content(paper.md_path)
 
     if not content:
         raise HTTPException(400, "没有可用的论文内容")
@@ -302,59 +301,6 @@ async def summarize_paper(paper_id: str, db: AsyncSession = DBSession):
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
-
-@router.get("/{paper_id}/summary")
-async def get_summary(paper_id: str, db: AsyncSession = DBSession):
-    summary = await crud.get_summary(db, paper_id)
-    if not summary:
-        return {}
-    return summary
-
-
-@router.post("/{paper_id}/chat")
-async def chat_with_paper(paper_id: str, body: schemas.ChatRequest, db: AsyncSession = DBSession):
-    paper = await crud.get_paper(db, paper_id)
-    if not paper:
-        raise HTTPException(404, "论文不存在")
-
-    content = paper.md_content
-    if not content and paper.md_path:
-        content = utils.read_file_content(paper.md_path)
-
-    if not content:
-        raise HTTPException(400, "没有可用的论文内容")
-
-    user_tokens = utils.count_tokens_approx(body.message)
-    await crud.add_conversation(db, paper_id, "user", body.message, user_tokens)
-
-    history_objs = await crud.get_conversations(db, paper_id)
-    history = [{"role": h.role, "content": h.content} for h in reversed(history_objs)]
-
-    async def event_stream():
-        full_text = ""
-        async for chunk in service.stream_chat(content, history[:-1], body.message, db):
-            if chunk.startswith("__DONE__"):
-                full_text = chunk[7:]
-                break
-            yield f"data: {chunk}\n\n".encode("utf-8")
-
-        assistant_tokens = utils.count_tokens_approx(full_text)
-        await crud.add_conversation(db, paper_id, "assistant", full_text, assistant_tokens)
-        yield f"data: [DONE]\n\n".encode("utf-8")
-
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
-
-
-@router.get("/{paper_id}/conversations", response_model=list[schemas.ConversationResponse])
-async def get_conversations(
-    paper_id: str,
-    limit: int = Query(50, ge=1, le=200),
-    db: AsyncSession = DBSession,
-):
-    convs = await crud.get_conversations(db, paper_id, limit)
-    return list(reversed(convs))
-
-
 @router.post("/compare")
 async def compare_papers(body: schemas.CompareRequest, db: AsyncSession = DBSession):
     contents = []
@@ -362,12 +308,10 @@ async def compare_papers(body: schemas.CompareRequest, db: AsyncSession = DBSess
         paper = await crud.get_paper(db, pid)
         if paper:
             content = paper.md_content
-            if not content and paper.md_path:
-                content = utils.read_file_content(paper.md_path)
             contents.append({"title": paper.title or paper.filename, "content": content})
 
     if len(contents) < 2:
-        raise HTTPException(400, "至少需要2篇论文进行对比")
+        raise HTTPException(400, "????2???????")
 
     async def event_stream():
         async for chunk in service.stream_compare(contents, db):
@@ -381,14 +325,11 @@ async def compare_papers(body: schemas.CompareRequest, db: AsyncSession = DBSess
 async def extract_paper_info(paper_id: str, body: schemas.ExtractRequest, db: AsyncSession = DBSession):
     paper = await crud.get_paper(db, paper_id)
     if not paper:
-        raise HTTPException(404, "论文不存在")
+        raise HTTPException(404, "?????")
 
     content = paper.md_content
-    if not content and paper.md_path:
-        content = utils.read_file_content(paper.md_path)
-
     if not content:
-        raise HTTPException(400, "没有可用的论文内容")
+        raise HTTPException(400, "?????????")
 
     items = await service.extract_info(content, body.types, db)
     return await crud.save_extractions(db, paper_id, items)
@@ -397,11 +338,3 @@ async def extract_paper_info(paper_id: str, body: schemas.ExtractRequest, db: As
 @router.get("/{paper_id}/extractions", response_model=list[schemas.ExtractionResponse])
 async def get_extractions(paper_id: str, db: AsyncSession = DBSession):
     return await crud.get_extractions(db, paper_id)
-
-
-
-
-
-
-
-

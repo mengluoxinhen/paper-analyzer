@@ -1,6 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, delete, insert
 from app.papers.model import Paper, Folder, Tag, paper_tags, Summary, Conversation, Extraction
+from app.qa import indexer
 
 
 # ── Folder helpers ──
@@ -124,6 +125,15 @@ async def delete_folder(db: AsyncSession, folder_id: str) -> bool:
         await db.execute(delete(Folder).where(Folder.id == fid))
 
     await db.commit()
+
+    # Clean up vector index for deleted papers
+    if paper_ids:
+        for pid in paper_ids:
+            try:
+                indexer.delete_paper_index(pid)
+            except Exception:
+                pass
+
     return True
 
 
@@ -163,11 +173,11 @@ async def delete_tag(db: AsyncSession, tag_id: str) -> bool:
 async def create_paper(
     db: AsyncSession, title: str, filename: str,
     pdf_path: str = "", folder_id: str | None = None,
-    md_path: str = "", json_path: str = "", md_content: str = "",
+    md_content: str = "",
 ) -> Paper:
     paper = Paper(
         title=title, filename=filename,
-        md_path=md_path, json_path=json_path,
+
         md_content=md_content, pdf_path=pdf_path,
         folder_id=folder_id,
     )
@@ -260,6 +270,11 @@ async def delete_paper(db: AsyncSession, paper_id: str) -> bool:
     await db.execute(delete(Summary).where(Summary.paper_id == paper_id))
     await db.delete(paper)
     await db.commit()
+    # Clean up vector index
+    try:
+        indexer.delete_paper_index(paper_id)
+    except Exception:
+        pass
     return True
 
 
@@ -339,8 +354,6 @@ async def paper_to_response(db: AsyncSession, paper: Paper) -> dict:
         "id": paper.id,
         "title": paper.title,
         "filename": paper.filename,
-        "md_path": paper.md_path,
-        "json_path": paper.json_path,
         "pdf_path": paper.pdf_path or "",
         "status": paper.status,
         "folder_id": paper.folder_id,

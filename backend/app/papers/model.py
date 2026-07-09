@@ -1,4 +1,4 @@
-﻿from datetime import datetime
+from datetime import datetime
 import uuid
 
 from sqlalchemy import Column, Integer, String, Text, DateTime, JSON, func, Table, UniqueConstraint
@@ -24,7 +24,7 @@ paper_tags = Table(
 
 class Folder(Base):
     __tablename__ = "folders"
-    __table_args__ = (UniqueConstraint('name', 'parent_id', name='uq_folder_name_parent'),)
+    __table_args__ = (UniqueConstraint("name", "parent_id", name="uq_folder_name_parent"),)
 
     id = Column(String(32), primary_key=True, default=_new_uuid)
     name = Column(String(200), nullable=False)
@@ -46,9 +46,7 @@ class Paper(Base):
     id = Column(String(32), primary_key=True, default=_new_uuid)
     title = Column(String(500), default="")
     filename = Column(String(500), nullable=False)
-    md_path = Column(String(1000), default="")
     pdf_path = Column(String(1000), default="")
-    json_path = Column(String(1000), default="")
     md_content = Column(LONGTEXT, default="")
     status = Column(String(50), default="uploaded")
     mineru_batch_id = Column(String(200), default="")
@@ -75,6 +73,27 @@ class Conversation(Base):
 
     id = Column(String(32), primary_key=True, default=_new_uuid)
     paper_id = Column(String(32), nullable=False)
+    session_id = Column(String(32), nullable=True, default=None)
+    role = Column(String(20), nullable=False)
+    content = Column(LONGTEXT, nullable=False)
+    tokens = Column(Integer, default=0)
+    created_at = Column(DateTime, server_default=func.now())
+
+
+class ChatSession(Base):
+    __tablename__ = "chat_sessions"
+
+    id = Column(String(32), primary_key=True, default=_new_uuid)
+    paper_id = Column(String(32), nullable=True, default=None)
+    title = Column(String(300), default="")
+    created_at = Column(DateTime, server_default=func.now())
+
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+
+    id = Column(String(32), primary_key=True, default=_new_uuid)
+    session_id = Column(String(32), nullable=False)
     role = Column(String(20), nullable=False)
     content = Column(LONGTEXT, nullable=False)
     tokens = Column(Integer, default=0)

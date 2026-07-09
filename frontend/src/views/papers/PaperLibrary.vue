@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="library">
     <div class="library-header">
       <h3>论文库</h3>
@@ -11,6 +11,14 @@
           <span>上传</span>
         </el-button>
       </div>
+    </div>
+
+    <div class="qa-nav">
+      <button class="qa-nav-btn" @click="router_qa.push('/qa')">
+        <span class="qa-nav-icon">💬</span>
+        <span class="qa-nav-label">全局问答</span>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+      </button>
     </div>
 
     <div class="library-search">
@@ -169,6 +177,8 @@
 </template>
 
 <script setup>
+import { useRouter } from 'vue-router';
+const router_qa = useRouter();
 import { ref, onMounted, watch } from "vue";
 import {
   Plus, Check, Close, Folder, Upload, UploadFilled,
@@ -362,6 +372,13 @@ defineExpose({ loadTags });
 .library-header { display: flex; justify-content: space-between; align-items: center; padding: var(--space-lg) var(--space-lg) var(--space-md); }
 .library-header h3 { font-size: var(--font-size-md); font-weight: 600; color: var(--text-primary); }
 .header-actions { display: flex; align-items: center; gap: var(--space-xs); }
+.qa-nav { padding: 0 var(--space-sm); margin-bottom: 8px; }
+.qa-nav-btn { display: flex; align-items: center; gap: 8px; width: 100%; padding: 10px 12px; border: 1px solid var(--accent); border-radius: var(--radius-md); background: linear-gradient(135deg, var(--accent-light), rgba(129,140,248,0.08)); color: var(--accent); cursor: pointer; font-size: 13px; font-weight: 500; transition: all 0.15s; }
+.qa-nav-btn:hover { background: var(--accent); color: #fff; }
+.qa-nav-btn:hover .qa-nav-icon { transform: scale(1.1); }
+.qa-nav-icon { font-size: 16px; transition: transform 0.15s; }
+.qa-nav-label { flex: 1; text-align: left; }
+
 .library-search { padding: 0 var(--space-lg) var(--space-md); }
 .search-input :deep(.el-input__wrapper) { border-radius: var(--radius-full) !important; background: var(--bg-primary); border: none; padding: 1px 12px; }
 .search-input :deep(.el-input__inner) { font-size: var(--font-size-sm); }

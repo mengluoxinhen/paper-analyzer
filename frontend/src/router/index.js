@@ -7,6 +7,11 @@ const routes = [
     name: "Papers",
     component: () => import("../views/papers/PaperLayout.vue"),
   },
+  {
+    path: "/qa",
+    name: "GlobalQA",
+    component: () => import("../views/GlobalQA.vue"),
+  },
 ];
 
 export default createRouter({ history: createWebHistory(), routes });

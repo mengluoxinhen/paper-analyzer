@@ -20,7 +20,7 @@ async def lifespan(app: FastAPI):
     await engine.dispose()
 
 
-app = FastAPI(title="Paper Analysis API", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="PaperMind API", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -38,11 +38,15 @@ async def health():
 
 from app.settings.router import router as settings_router
 from app.papers.router import router as papers_router, folder_router, tag_router
+from app.qa.router import router as qa_router
+from app.qa.chat_router import router as chat_router
 
 app.include_router(settings_router)
 app.include_router(folder_router)
 app.include_router(tag_router)
 app.include_router(papers_router)
+app.include_router(qa_router)
+app.include_router(chat_router)
 
 
 if __name__ == "__main__":
