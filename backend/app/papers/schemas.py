@@ -87,6 +87,8 @@ class SummaryResponse(BaseModel):
     conclusion: str = ""
     conditions: str = ""
     full_text: str = ""
+    innovation: str = ""
+    paper_type: str = ""
     model: str = ""
     tokens: int = 0
     created_at: datetime | None = None

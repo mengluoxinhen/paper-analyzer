@@ -48,11 +48,16 @@
 
       <div class="chat-body" ref="chatBody">
         <div v-if="summary && !currentSessionId" class="summary-block">
-          <div class="summary-header"><span>📝 论文总结</span><div class="summary-actions"><button class="action-btn" @click="copySummary" title="复制 Markdown"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button><button class="action-btn" @click="downloadSummary" title="下载 Markdown"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></button><button class="action-btn" @click="$emit('regenerate')" title="重新生成总结"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button></div></div>
+          <div class="summary-header"><span>📝 论文总结</span><span v-if="summary.paper_type" class="paper-type-badge">{{ summary.paper_type }}</span><div class="summary-actions"><button class="action-btn" @click="copySummary" title="复制 Markdown"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button><button class="action-btn" @click="downloadSummary" title="下载 Markdown"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></button><button class="action-btn" @click="$emit('regenerate')" title="重新生成总结"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button></div></div>
 
           <div class="summary-card">
-            <div class="summary-label">解决的问题</div>
+            <div class="summary-label">研究概述</div>
             <div v-if="summary.problem" class="summary-text" v-html="renderMsg(summary.problem)"></div>
+            <div v-else class="summary-text empty-hint">未提取到相关内容</div>
+          </div>
+          <div class="summary-card">
+            <div class="summary-label">核心创新点</div>
+            <div v-if="summary.innovation" class="summary-text" v-html="renderMsg(summary.innovation)"></div>
             <div v-else class="summary-text empty-hint">未提取到相关内容</div>
           </div>
           <div class="summary-card">
@@ -61,7 +66,7 @@
             <div v-else class="summary-text empty-hint">未提取到相关内容</div>
           </div>
           <div class="summary-card">
-            <div class="summary-label">工况</div>
+            <div class="summary-label">条件与方法</div>
             <div v-if="summary.conditions" class="conditions-table" v-html="renderTable(summary.conditions)"></div>
             <div v-else class="summary-text empty-hint">未提取到相关内容</div>
           </div>
@@ -270,9 +275,10 @@ function renderTable(text) {
 function buildSummaryMd() {
   if (!props.summary) return "";
   const parts = [];
-  if (props.summary.problem) parts.push("## 解决的问题\n\n" + props.summary.problem);
+  if (props.summary.problem) parts.push("## 研究概述\n\n" + props.summary.problem);
   if (props.summary.conclusion) parts.push("## 结论\n\n" + props.summary.conclusion);
-  if (props.summary.conditions) parts.push("## 工况\n\n" + props.summary.conditions);
+  if (props.summary.innovation) parts.push("## 核心创新点\n\n" + props.summary.innovation);
+  if (props.summary.conditions) parts.push("## 条件与方法\n\n" + props.summary.conditions);
   return parts.join("\n\n");
 }
 
@@ -389,5 +395,7 @@ function downloadSummary() {
 .conditions-table :deep(td) { padding: 6px 12px; border: 1px solid var(--border-light); }
 .conditions-table :deep(tr:nth-child(even)) { background: rgba(0,0,0,0.02); }
 .conditions-table :deep(.math-inline) { font-family: var(--font-mono); background: rgba(91,95,227,0.06); padding: 1px 4px; border-radius: 3px; font-style: italic; color: var(--accent); }
+
+.paper-type-badge { font-size: 11px; background: var(--accent-light); color: var(--accent); padding: 2px 10px; border-radius: var(--radius-full); font-weight: 500; margin-left: 8px; }
 </style>
 
