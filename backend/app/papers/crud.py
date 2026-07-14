@@ -1,7 +1,91 @@
-from sqlalchemy.ext.asyncio import AsyncSession
+﻿from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, delete, insert
-from app.papers.model import Paper, Folder, Tag, paper_tags, Summary, Conversation, Extraction
+from app.papers.model import Paper, Folder, Tag, KnowledgeBase, paper_tags, Summary, Conversation, Extraction, ChatSession
 from app.qa import indexer
+from difflib import SequenceMatcher
+
+
+DEFAULT_USER_ID = "default_user"
+
+
+# ── KnowledgeBase CRUD ──
+
+async def get_knowledge_bases(db: AsyncSession, user_id: str = DEFAULT_USER_ID) -> list[dict]:
+    """返回共享库 + 该用户的私有库"""
+    result = await db.execute(
+        select(KnowledgeBase).where(
+            (KnowledgeBase.is_shared == True) | (KnowledgeBase.user_id == user_id)
+        ).order_by(KnowledgeBase.is_shared.desc(), KnowledgeBase.created_at.asc())
+    )
+    kbs = list(result.scalars().all())
+    out = []
+    for kb in kbs:
+        cnt_result = await db.execute(
+            select(func.count(Paper.id)).where(Paper.knowledge_base_id == kb.id)
+        )
+        out.append({
+            "id": kb.id,
+            "name": kb.name,
+            "description": kb.description or "",
+            "user_id": kb.user_id,
+            "is_shared": kb.is_shared,
+            "paper_count": cnt_result.scalar() or 0,
+            "created_at": kb.created_at,
+        })
+    return out
+
+
+async def get_knowledge_base(db: AsyncSession, kb_id: str) -> KnowledgeBase | None:
+    return await db.get(KnowledgeBase, kb_id)
+
+
+async def create_knowledge_base(db: AsyncSession, name: str, description: str, user_id: str) -> KnowledgeBase:
+    kb = KnowledgeBase(name=name, description=description, user_id=user_id, is_shared=False)
+    db.add(kb)
+    await db.commit()
+    await db.refresh(kb)
+    return kb
+
+
+async def update_knowledge_base(db: AsyncSession, kb_id: str, name: str | None = None, description: str | None = None) -> KnowledgeBase | None:
+    kb = await db.get(KnowledgeBase, kb_id)
+    if not kb:
+        return None
+    if name is not None:
+        kb.name = name
+    if description is not None:
+        kb.description = description
+    await db.commit()
+    await db.refresh(kb)
+    return kb
+
+
+async def delete_knowledge_base(db: AsyncSession, kb_id: str) -> bool:
+    kb = await db.get(KnowledgeBase, kb_id)
+    if not kb or kb.is_shared:
+        return False
+
+    paper_result = await db.execute(select(Paper.id).where(Paper.knowledge_base_id == kb_id))
+    paper_ids = [row[0] for row in paper_result.fetchall()]
+
+    await db.execute(delete(ChatSession).where(ChatSession.knowledge_base_id == kb_id))
+    if paper_ids:
+        await db.execute(delete(paper_tags).where(paper_tags.c.paper_id.in_(paper_ids)))
+        await db.execute(delete(Extraction).where(Extraction.paper_id.in_(paper_ids)))
+        await db.execute(delete(Conversation).where(Conversation.paper_id.in_(paper_ids)))
+        await db.execute(delete(Summary).where(Summary.paper_id.in_(paper_ids)))
+        await db.execute(delete(Paper).where(Paper.id.in_(paper_ids)))
+    await db.execute(delete(Folder).where(Folder.knowledge_base_id == kb_id))
+    await db.execute(delete(Tag).where(Tag.knowledge_base_id == kb_id))
+    await db.delete(kb)
+    await db.commit()
+
+    import os, shutil
+    from app.config import get_settings
+    kb_chroma_dir = os.path.join(get_settings().qa_chroma_dir, f"kb_{kb_id}")
+    if os.path.isdir(kb_chroma_dir):
+        shutil.rmtree(kb_chroma_dir, ignore_errors=True)
+    return True
 
 
 # ── Folder helpers ──
@@ -27,7 +111,6 @@ async def get_folder(db: AsyncSession, folder_id: str) -> Folder | None:
 
 
 async def _get_child_folder_ids(db: AsyncSession, folder_id: str) -> list[str]:
-    """Recursively collect all descendant folder ids."""
     ids = [folder_id]
     children_result = await db.execute(
         select(Folder.id).where(Folder.parent_id == folder_id)
@@ -39,20 +122,23 @@ async def _get_child_folder_ids(db: AsyncSession, folder_id: str) -> list[str]:
 
 # ── Folder CRUD ──
 
-async def get_uncategorized_count(db: AsyncSession) -> int:
-    result = await db.execute(select(func.count(Paper.id)).where(Paper.folder_id == None))
+async def get_uncategorized_count(db: AsyncSession, kb_id: str) -> int:
+    result = await db.execute(
+        select(func.count(Paper.id)).where(
+            Paper.folder_id == None, Paper.knowledge_base_id == kb_id
+        )
+    )
     return result.scalar() or 0
 
 
-async def get_folders(db: AsyncSession) -> list[dict]:
-    result = await db.execute(select(Folder).order_by(Folder.created_at.asc()))
+async def get_folders(db: AsyncSession, kb_id: str) -> list[dict]:
+    result = await db.execute(
+        select(Folder).where(Folder.knowledge_base_id == kb_id).order_by(Folder.created_at.asc())
+    )
     folders = list(result.scalars().all())
 
-    # Preload all paper counts per folder
     paper_counts = {}
-    all_folders = {f.id: f for f in folders}
     for f in folders:
-        # Count papers directly in this folder plus children
         descendant_ids = await _get_child_folder_ids(db, f.id)
         cnt_result = await db.execute(
             select(func.count(Paper.id)).where(Paper.folder_id.in_(descendant_ids))
@@ -65,6 +151,7 @@ async def get_folders(db: AsyncSession) -> list[dict]:
             if f.parent_id == parent_id:
                 nodes.append({
                     "id": f.id, "name": f.name, "parent_id": f.parent_id,
+                    "knowledge_base_id": f.knowledge_base_id,
                     "paper_count": paper_counts.get(f.id, 0),
                     "children": build_tree(f.id),
                     "created_at": f.created_at,
@@ -74,7 +161,7 @@ async def get_folders(db: AsyncSession) -> list[dict]:
     return build_tree(None)
 
 
-async def create_folder(db: AsyncSession, name: str, parent_id: str | None = None) -> Folder:
+async def create_folder(db: AsyncSession, name: str, parent_id: str | None, kb_id: str) -> Folder:
     if parent_id is not None:
         depth = await _get_folder_depth(db, parent_id)
         if depth >= MAX_FOLDER_DEPTH:
@@ -82,7 +169,7 @@ async def create_folder(db: AsyncSession, name: str, parent_id: str | None = Non
         parent = await db.get(Folder, parent_id)
         if not parent:
             raise ValueError("父文件夹不存在")
-    folder = Folder(name=name, parent_id=parent_id)
+    folder = Folder(name=name, parent_id=parent_id, knowledge_base_id=kb_id)
     db.add(folder)
     await db.commit()
     await db.refresh(folder)
@@ -102,57 +189,47 @@ async def delete_folder(db: AsyncSession, folder_id: str) -> bool:
     folder = await db.get(Folder, folder_id)
     if not folder:
         return False
-
-    # Collect all descendant folder ids + self
+    kb_id = folder.knowledge_base_id
     all_folder_ids = await _get_child_folder_ids(db, folder_id)
-
-    # Find all papers in these folders
-    paper_result = await db.execute(
-        select(Paper.id).where(Paper.folder_id.in_(all_folder_ids))
-    )
+    paper_result = await db.execute(select(Paper.id).where(Paper.folder_id.in_(all_folder_ids)))
     paper_ids = [row[0] for row in paper_result.fetchall()]
-
-    # Delete children: paper_tags, extractions, conversations, summaries, papers
     if paper_ids:
         await db.execute(delete(paper_tags).where(paper_tags.c.paper_id.in_(paper_ids)))
         await db.execute(delete(Extraction).where(Extraction.paper_id.in_(paper_ids)))
         await db.execute(delete(Conversation).where(Conversation.paper_id.in_(paper_ids)))
         await db.execute(delete(Summary).where(Summary.paper_id.in_(paper_ids)))
         await db.execute(delete(Paper).where(Paper.id.in_(paper_ids)))
-
-    # Delete child folders (bottom-up)
     for fid in reversed(all_folder_ids):
         await db.execute(delete(Folder).where(Folder.id == fid))
-
     await db.commit()
-
-    # Clean up vector index for deleted papers
     if paper_ids:
         for pid in paper_ids:
-            try:
-                indexer.delete_paper_index(pid)
-            except Exception:
-                pass
-
+            try: indexer.delete_paper_index(pid, kb_id)
+            except Exception: pass
     return True
 
 
 # ── Tag CRUD ──
-async def get_tags(db: AsyncSession) -> list[dict]:
-    result = await db.execute(select(Tag).order_by(Tag.created_at.asc()))
+
+async def get_tags(db: AsyncSession, kb_id: str) -> list[dict]:
+    result = await db.execute(
+        select(Tag).where(Tag.knowledge_base_id == kb_id).order_by(Tag.created_at.asc())
+    )
     tags = list(result.scalars().all())
     out = []
     for t in tags:
         cnt_result = await db.execute(
             select(func.count()).select_from(paper_tags).where(paper_tags.c.tag_id == t.id)
         )
-        cnt = cnt_result.scalar() or 0
-        out.append({"id": t.id, "name": t.name, "paper_count": cnt, "created_at": t.created_at})
+        out.append({
+            "id": t.id, "name": t.name, "knowledge_base_id": t.knowledge_base_id,
+            "paper_count": cnt_result.scalar() or 0, "created_at": t.created_at
+        })
     return out
 
 
-async def create_tag(db: AsyncSession, name: str) -> Tag:
-    tag = Tag(name=name)
+async def create_tag(db: AsyncSession, name: str, kb_id: str) -> Tag:
+    tag = Tag(name=name, knowledge_base_id=kb_id)
     db.add(tag)
     await db.commit()
     await db.refresh(tag)
@@ -170,16 +247,15 @@ async def delete_tag(db: AsyncSession, tag_id: str) -> bool:
 
 
 # ── Paper CRUD ──
-async def create_paper(
-    db: AsyncSession, title: str, filename: str,
-    pdf_path: str = "", folder_id: str | None = None,
-    md_content: str = "",
-) -> Paper:
-    paper = Paper(
-        title=title, filename=filename,
 
-        md_content=md_content, pdf_path=pdf_path,
-        folder_id=folder_id,
+async def create_paper(db: AsyncSession, title: str, filename: str,
+                       pdf_path: str, folder_id: str | None = None,
+                       kb_id: str | None = None, file_md5: str = "",
+                       review_status: str = "none") -> Paper:
+    paper = Paper(
+        title=title, filename=filename, pdf_path=pdf_path,
+        folder_id=folder_id, knowledge_base_id=kb_id or "",
+        file_md5=file_md5, review_status=review_status
     )
     db.add(paper)
     await db.commit()
@@ -188,32 +264,38 @@ async def create_paper(
 
 
 async def get_papers(
-    db: AsyncSession, page: int = 1, page_size: int = 20,
-    keyword: str = "", folder_id: str | None = None, tag: str = "",
+    db: AsyncSession, kb_id: str,
+    folder_id: str | None = None, keyword: str = "", tag: str = "",
+    page: int = 1, page_size: int = 50,
 ) -> tuple[list[Paper], int]:
-    q = select(Paper)
-    count_q = select(func.count(Paper.id))
+    query = select(Paper).where(Paper.knowledge_base_id == kb_id)
+    count_query = select(func.count(Paper.id)).where(Paper.knowledge_base_id == kb_id)
+
+    if folder_id is not None:
+        descendant_ids = await _get_child_folder_ids(db, folder_id)
+        query = query.where(Paper.folder_id.in_(descendant_ids))
+        count_query = count_query.where(Paper.folder_id.in_(descendant_ids))
 
     if keyword:
-        q = q.where(Paper.title.contains(keyword))
-        count_q = count_q.where(Paper.title.contains(keyword))
-    if folder_id == "-1":
-        q = q.where(Paper.folder_id == None)
-        count_q = count_q.where(Paper.folder_id == None)
-    elif folder_id is not None:
-        q = q.where(Paper.folder_id == folder_id)
-        count_q = count_q.where(Paper.folder_id == folder_id)
+        like = f"%{keyword}%"
+        cond = Paper.title.ilike(like) | Paper.filename.ilike(like)
+        query = query.where(cond)
+        count_query = count_query.where(cond)
+
     if tag:
-        tag_subq = select(paper_tags.c.paper_id).join(Tag).where(Tag.name == tag)
-        q = q.where(Paper.id.in_(tag_subq))
-        count_q = count_q.where(Paper.id.in_(tag_subq))
+        query = query.join(paper_tags, Paper.id == paper_tags.c.paper_id).join(
+            Tag, paper_tags.c.tag_id == Tag.id
+        ).where(Tag.name == tag)
+        count_query = count_query.join(
+            paper_tags, Paper.id == paper_tags.c.paper_id
+        ).join(Tag, paper_tags.c.tag_id == Tag.id).where(Tag.name == tag)
 
-    q = q.order_by(Paper.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
+    total_result = await db.execute(count_query)
+    total = total_result.scalar() or 0
 
-    total_result = await db.execute(count_q)
-    total = total_result.scalar()
-
-    result = await db.execute(q)
+    query = query.order_by(Paper.created_at.desc()).offset(
+        (page - 1) * page_size).limit(page_size)
+    result = await db.execute(query)
     papers = list(result.scalars().all())
     return papers, total
 
@@ -263,16 +345,15 @@ async def delete_paper(db: AsyncSession, paper_id: str) -> bool:
     paper = await db.get(Paper, paper_id)
     if not paper:
         return False
-    # Manual cascade
+    kb_id = paper.knowledge_base_id
     await db.execute(delete(paper_tags).where(paper_tags.c.paper_id == paper_id))
     await db.execute(delete(Extraction).where(Extraction.paper_id == paper_id))
     await db.execute(delete(Conversation).where(Conversation.paper_id == paper_id))
     await db.execute(delete(Summary).where(Summary.paper_id == paper_id))
     await db.delete(paper)
     await db.commit()
-    # Clean up vector index
     try:
-        indexer.delete_paper_index(paper_id)
+        indexer.delete_paper_index(paper_id, kb_id)
     except Exception:
         pass
     return True
@@ -282,9 +363,7 @@ async def set_paper_tags(db: AsyncSession, paper_id: str, tag_ids: list[str]) ->
     paper = await db.get(Paper, paper_id)
     if not paper:
         return None
-    # Delete existing tags
     await db.execute(delete(paper_tags).where(paper_tags.c.paper_id == paper_id))
-    # Insert new tags
     for tid in tag_ids:
         await db.execute(
             insert(paper_tags).values(paper_id=paper_id, tag_id=tid).prefix_with("IGNORE")
@@ -293,7 +372,78 @@ async def set_paper_tags(db: AsyncSession, paper_id: str, tag_ids: list[str]) ->
     return paper
 
 
+async def check_duplicate_md5(db: AsyncSession, kb_id: str, file_md5: str) -> Paper | None:
+    result = await db.execute(
+        select(Paper).where(Paper.knowledge_base_id == kb_id, Paper.file_md5 == file_md5)
+    )
+    return result.scalar_one_or_none()
+
+
+def _title_similar(a: str, b: str) -> bool:
+    if not a or not b:
+        return False
+    return SequenceMatcher(None, a.lower().strip(), b.lower().strip()).ratio() > 0.85
+
+
+# ── Review CRUD ──
+
+async def get_pending_papers(db: AsyncSession, kb_id: str) -> list[dict]:
+    result = await db.execute(
+        select(Paper).where(
+            Paper.knowledge_base_id == kb_id,
+            Paper.review_status == "pending"
+        ).order_by(Paper.created_at.desc())
+    )
+    papers = list(result.scalars().all())
+    out = []
+    for p in papers:
+        is_dup = False
+        dup_title = ""
+        if p.title:
+            approved = await db.execute(
+                select(Paper.title).where(
+                    Paper.knowledge_base_id == kb_id,
+                    Paper.review_status == "approved"
+                )
+            )
+            for (at,) in approved.fetchall():
+                if at and _title_similar(p.title, at):
+                    is_dup = True
+                    dup_title = at
+                    break
+        out.append({
+            "id": p.id, "title": p.title, "filename": p.filename,
+            "created_at": p.created_at,
+            "is_duplicate": is_dup, "duplicate_title": dup_title
+        })
+    return out
+
+
+async def approve_paper(db: AsyncSession, paper_id: str) -> Paper | None:
+    paper = await db.get(Paper, paper_id)
+    if not paper:
+        return None
+    paper.review_status = "approved"
+    paper.reviewed_at = func.now()
+    await db.commit()
+    await db.refresh(paper)
+    return paper
+
+
+async def reject_paper(db: AsyncSession, paper_id: str, comment: str) -> Paper | None:
+    paper = await db.get(Paper, paper_id)
+    if not paper:
+        return None
+    paper.review_status = "rejected"
+    paper.review_comment = comment
+    paper.reviewed_at = func.now()
+    await db.commit()
+    await db.refresh(paper)
+    return paper
+
+
 # ── Summary ──
+
 async def create_summary(db: AsyncSession, paper_id: str, **kwargs) -> Summary:
     summary = Summary(paper_id=paper_id, **kwargs)
     db.add(summary)
@@ -311,6 +461,7 @@ async def get_summary(db: AsyncSession, paper_id: str) -> Summary | None:
 
 
 # ── Conversation ──
+
 async def add_conversation(db: AsyncSession, paper_id: str, role: str, content: str, tokens: int = 0) -> Conversation:
     conv = Conversation(paper_id=paper_id, role=role, content=content, tokens=tokens)
     db.add(conv)
@@ -328,6 +479,7 @@ async def get_conversations(db: AsyncSession, paper_id: str, limit: int = 50) ->
 
 
 # ── Extraction ──
+
 async def save_extractions(db: AsyncSession, paper_id: str, results: list[dict]) -> list[Extraction]:
     await db.execute(delete(Extraction).where(Extraction.paper_id == paper_id))
     objs = []
@@ -347,6 +499,7 @@ async def get_extractions(db: AsyncSession, paper_id: str) -> list[Extraction]:
 
 
 # ── Helper ──
+
 async def paper_to_response(db: AsyncSession, paper: Paper) -> dict:
     tags = await _get_paper_tags(db, paper.id)
     folder = await _get_paper_folder(db, paper.folder_id)
@@ -358,6 +511,10 @@ async def paper_to_response(db: AsyncSession, paper: Paper) -> dict:
         "status": paper.status,
         "folder_id": paper.folder_id,
         "folder_name": folder.name if folder else None,
+        "knowledge_base_id": paper.knowledge_base_id,
+        "review_status": paper.review_status,
+        "file_md5": paper.file_md5 or "",
+        "review_comment": paper.review_comment or "",
         "tags": [{"id": t.id, "name": t.name} for t in tags],
         "created_at": paper.created_at,
     }
