@@ -271,7 +271,11 @@ async def get_papers(
     query = select(Paper).where(Paper.knowledge_base_id == kb_id)
     count_query = select(func.count(Paper.id)).where(Paper.knowledge_base_id == kb_id)
 
-    if folder_id is not None:
+    if folder_id == '-1':
+        # Uncategorized: papers with no folder
+        query = query.where(Paper.folder_id == None)
+        count_query = count_query.where(Paper.folder_id == None)
+    elif folder_id is not None:
         descendant_ids = await _get_child_folder_ids(db, folder_id)
         query = query.where(Paper.folder_id.in_(descendant_ids))
         count_query = count_query.where(Paper.folder_id.in_(descendant_ids))
