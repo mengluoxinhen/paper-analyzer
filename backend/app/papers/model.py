@@ -1,7 +1,7 @@
-from datetime import datetime
+﻿from datetime import datetime
 import uuid
 
-from sqlalchemy import Column, Integer, String, Text, DateTime, JSON, func, Table, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Text, DateTime, Boolean, JSON, func, Table, UniqueConstraint
 from sqlalchemy.dialects.mysql import LONGTEXT
 from sqlalchemy.orm import DeclarativeBase
 
@@ -22,21 +22,35 @@ paper_tags = Table(
 )
 
 
+class KnowledgeBase(Base):
+    __tablename__ = "knowledge_bases"
+
+    id = Column(String(32), primary_key=True, default=_new_uuid)
+    name = Column(String(200), nullable=False)
+    description = Column(String(1000), default="")
+    user_id = Column(String(32), nullable=True, default=None, index=True)
+    is_shared = Column(Boolean, default=False)
+    created_at = Column(DateTime, server_default=func.now())
+
+
 class Folder(Base):
     __tablename__ = "folders"
-    __table_args__ = (UniqueConstraint("name", "parent_id", name="uq_folder_name_parent"),)
+    __table_args__ = (UniqueConstraint("name", "parent_id", "knowledge_base_id", name="uq_folder_name_parent_kb"),)
 
     id = Column(String(32), primary_key=True, default=_new_uuid)
     name = Column(String(200), nullable=False)
     parent_id = Column(String(32), nullable=True, default=None)
+    knowledge_base_id = Column(String(32), nullable=False, index=True)
     created_at = Column(DateTime, server_default=func.now())
 
 
 class Tag(Base):
     __tablename__ = "tags"
+    __table_args__ = (UniqueConstraint("name", "knowledge_base_id", name="uq_tag_name_kb"),)
 
     id = Column(String(32), primary_key=True, default=_new_uuid)
-    name = Column(String(100), unique=True, nullable=False)
+    name = Column(String(100), nullable=False)
+    knowledge_base_id = Column(String(32), nullable=False, index=True)
     created_at = Column(DateTime, server_default=func.now())
 
 
@@ -51,6 +65,11 @@ class Paper(Base):
     status = Column(String(50), default="uploaded")
     mineru_batch_id = Column(String(200), default="")
     folder_id = Column(String(32), nullable=True, default=None)
+    knowledge_base_id = Column(String(32), nullable=False, index=True)
+    review_status = Column(String(20), default="none")
+    file_md5 = Column(String(32), default="")
+    reviewed_at = Column(DateTime, nullable=True, default=None)
+    review_comment = Column(String(500), default="")
     created_at = Column(DateTime, server_default=func.now())
 
 
@@ -85,6 +104,7 @@ class ChatSession(Base):
 
     id = Column(String(32), primary_key=True, default=_new_uuid)
     paper_id = Column(String(32), nullable=True, default=None)
+    knowledge_base_id = Column(String(32), nullable=True, default=None, index=True)
     title = Column(String(300), default="")
     created_at = Column(DateTime, server_default=func.now())
 
