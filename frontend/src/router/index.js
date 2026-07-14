@@ -12,6 +12,11 @@ const routes = [
     name: "GlobalQA",
     component: () => import("../views/GlobalQA.vue"),
   },
+  {
+    path: "/admin/review",
+    name: "AdminReview",
+    component: () => import("../views/admin/ReviewPage.vue"),
+  },
 ];
 
 export default createRouter({ history: createWebHistory(), routes });

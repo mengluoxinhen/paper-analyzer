@@ -1,4 +1,4 @@
-import { defineStore } from "pinia";
+﻿import { defineStore } from "pinia";
 import { getPapers, getPaper, deletePaper, getSummary } from "../api/papers";
 
 export const usePapersStore = defineStore("papers", {
@@ -8,12 +8,18 @@ export const usePapersStore = defineStore("papers", {
     currentPaper: null,
     currentSummary: null,
     loading: false,
+    kbId: null,
   }),
 
   actions: {
+    setKbId(kbId) {
+      this.kbId = kbId;
+    },
+
     async fetchList(params = {}) {
       this.loading = true;
       try {
+        if (this.kbId) params.kb_id = this.kbId;
         const res = await getPapers(params);
         this.list = res.data.papers;
         this.total = res.data.total;

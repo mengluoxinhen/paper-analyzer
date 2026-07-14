@@ -118,6 +118,7 @@
 
 <script setup>
 import { ref, nextTick, onMounted } from "vue";
+import { useKnowledgeBaseStore } from "../stores/knowledgeBase";
 import { ElMessage } from "element-plus";
 import { renderMarkdown } from "../utils/marked-setup.js";
 import { rebuildIndex } from "../api/qa.js";
@@ -145,14 +146,14 @@ onMounted(() => { loadSessions(); });
 
 async function loadSessions() {
   try {
-    const res = await getChatSessions(null); // null = global sessions
+    const res = await getChatSessions(null, kbStore.currentId); // null = global sessions
     sessions.value = res.data.sessions || [];
   } catch { /* ignore */ }
 }
 
 async function handleNewSession() {
   try {
-    const res = await createChatSession("", null);
+    const res = await createChatSession("", null, kbStore.currentId);
     const newSession = res.data;
     sessions.value.unshift(newSession);
     currentSessionId.value = newSession.id;
@@ -243,7 +244,8 @@ function scrollToBottom() {
 async function handleRebuild() {
   rebuilding.value = true;
   try {
-    const res = await rebuildIndex();
+    if (!kbStore.currentId) return;
+    const res = await rebuildIndex(kbStore.currentId);
     ElMessage.success(res.data.message || "索引重建完成");
   } catch {
     ElMessage.error("索引重建失败");

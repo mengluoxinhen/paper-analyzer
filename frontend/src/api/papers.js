@@ -1,14 +1,12 @@
 ﻿import http from "./index.js";
 
-export function uploadPaper(title, pdfFile, folderId) {
+export function uploadPaper(title, pdfFile, folderId, kbId) {
   const form = new FormData();
   if (pdfFile) form.append("pdf_file", pdfFile);
-  
-  let url = "/papers/upload?title=" + encodeURIComponent(title);
+  let url = "/papers/upload?title=" + encodeURIComponent(title) + "&kb_id=" + encodeURIComponent(kbId);
   if (folderId != null) url += "&folder_id=" + folderId;
   return http.post(url, form);
 }
-
 
 export function getPapers(params) {
   return http.get("/papers", { params });
@@ -42,13 +40,12 @@ export function getExtractions(paperId) {
   return http.get("/papers/" + paperId + "/extractions");
 }
 
-// Folders
-export function getFolders() {
-  return http.get("/folders");
+export function getFolders(kbId) {
+  return http.get("/folders", { params: { kb_id: kbId } });
 }
 
-export function createFolder(name, parentId) {
-  return http.post("/folders", { name, parent_id: parentId || null });
+export function createFolder(name, parentId, kbId) {
+  return http.post("/folders", { name, parent_id: parentId || null, knowledge_base_id: kbId });
 }
 
 export function renameFolder(id, name) {
@@ -59,13 +56,12 @@ export function deleteFolder(id) {
   return http.delete("/folders/" + id);
 }
 
-// Tags
-export function getTags() {
-  return http.get("/tags");
+export function getTags(kbId) {
+  return http.get("/tags", { params: { kb_id: kbId } });
 }
 
-export function createTag(name) {
-  return http.post("/tags", { name });
+export function createTag(name, kbId) {
+  return http.post("/tags", { name, knowledge_base_id: kbId });
 }
 
 export function deleteTag(id) {

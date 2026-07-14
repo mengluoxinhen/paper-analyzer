@@ -1,5 +1,5 @@
 ﻿import http from "./index.js";
 
-export function rebuildIndex() {
-  return http.post("/qa/rebuild");
+export function rebuildIndex(kbId) {
+  return http.post("/qa/rebuild", null, { params: { kb_id: kbId } });
 }

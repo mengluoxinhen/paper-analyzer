@@ -1,7 +1,16 @@
 <template>
   <div class="paper-layout">
     <aside class="paper-sidebar">
+      <div class="kb-selector">
+        <div class="kb-selector-inner">
+          <select v-model="kbStore.currentId" class="kb-select" @change="onKbChange">
+            <option v-for="kb in kbStore.list" :key="kb.id" :value="kb.id">{{ kb.name }}</option>
+          </select>
+          <button class="kb-add-btn" @click="showKbDialog = true">+</button>
+        </div>
+      </div>
       <PaperLibrary
+        :kbId="kbStore.currentId"
         ref="libraryRef"
         :papers="store.list"
         :loading="store.loading"
@@ -54,6 +63,7 @@
 <script setup>
 import { ref, computed, onMounted, reactive } from "vue";
 import { ElMessage } from "element-plus";
+import { useKnowledgeBaseStore } from "../../stores/knowledgeBase";
 import { usePapersStore } from "../../stores/papers";
 import { uploadPaper } from "../../api/papers";
 import PaperLibrary from "./PaperLibrary.vue";
@@ -62,7 +72,12 @@ import PaperChat from "./PaperChat.vue";
 import SettingsDialog from "../settings/SettingsDialog.vue";
 
 const store = usePapersStore();
+const kbStore = useKnowledgeBaseStore();
 const settingsVisible = ref(false);
+const showKbDialog = ref(false);
+const newKbName = ref("");
+const editingKbId = ref(null);
+const editingKbName = ref("");
 const chatWidth = ref(520);
 const resizing = ref(false);
 const MIN_CHAT = 400;
@@ -77,6 +92,15 @@ const parseProgressMap = reactive({});
 
 const chatPanelStyle = computed(() => ({ width: chatWidth.value + 'px', minWidth: chatWidth.value + 'px', flexShrink: '0' }));
 const mainPanelStyle = computed(() => ({ minWidth: '0' }));
+
+function onKbChange() {
+  if (kbStore.currentId) {
+    store.setKbId(kbStore.currentId);
+    store.currentPaper = null;
+    store.currentSummary = null;
+    store.fetchList();
+  }
+}
 
 function startResize(e) {
   resizing.value = true;
@@ -103,7 +127,7 @@ function startResize(e) {
   document.body.style.userSelect = 'none';
 }
 
-onMounted(() => { store.fetchList(); });
+onMounted(async () => { await kbStore.fetchList(); kbStore.restoreSelection(); if (kbStore.currentId) { store.setKbId(kbStore.currentId); store.fetchList(); } });
 
 async function handleSelect(paper) {
   store.currentPaper = await store.fetchPaper(paper.id);
@@ -145,7 +169,7 @@ async function handleDelete(id) {
 
 async function handleUpload(title, pdfFile, folderId) {
   try {
-    const res = await uploadPaper(title, pdfFile, folderId);
+    const res = await uploadPaper(title, pdfFile, folderId, kbStore.currentId);
     ElMessage.success("上传成功");
     await store.fetchList();
 
@@ -265,6 +289,14 @@ async function streamSummarize(paperId) {
 </script>
 
 <style scoped>
+/* KB Selector */
+.kb-selector { padding: 8px 12px; border-bottom: 1px solid var(--border-light); flex-shrink: 0; }
+.kb-selector-inner { display: flex; gap: 4px; align-items: center; }
+.kb-select { flex: 1; min-width: 0; padding: 5px 8px; border: 1px solid var(--border-light); border-radius: var(--radius-sm); background: var(--bg-hover); font-size: 12px; color: var(--text-primary); outline: none; cursor: pointer; font-family: var(--font-sans); }
+.kb-select:focus { border-color: var(--accent); }
+.kb-add-btn { width: 28px; height: 28px; border: 1px solid var(--border-light); border-radius: var(--radius-sm); background: var(--bg-hover); cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--text-secondary); flex-shrink: 0; font-size: 16px; }
+.kb-add-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-light); }
+
 .paper-layout { display: flex; height: 100vh; overflow: hidden; gap: 12px; padding: 12px; background: var(--bg-primary); }
 .paper-sidebar { width: 260px; min-width: 260px; flex-shrink: 0; background: var(--bg-card); border-radius: var(--radius-lg); box-shadow: var(--shadow-card); display: flex; flex-direction: column; overflow: hidden; transition: box-shadow var(--transition-base); }
 .paper-sidebar:hover { box-shadow: var(--shadow-md); }

@@ -195,6 +195,7 @@ const props = defineProps({
   loading: { type: Boolean, default: false },
   currentId: { type: [Number, String], default: null },
   parseProgressMap: { type: Object, default: () => ({}) },
+  kbId: { type: String, default: null },
 });
 const emit = defineEmits(["select", "delete", "upload", "search", "open-settings"]);
 
@@ -233,7 +234,7 @@ function emitSearch() { emit("search", { keyword: keyword.value, folder_id: acti
 
 async function loadFolders() {
   try {
-    const res = await getFolders();
+    const res = await getFolders(props.kbId);
     folders.value = res.data.folders || [];
     uncatCount.value = res.data.uncategorized_count || 0;
     buildFolderTree();
@@ -242,7 +243,7 @@ async function loadFolders() {
 
 async function loadTags() {
   try {
-    const res = await getTags();
+    const res = await getTags(props.kbId);
     tags.value = Array.isArray(res.data) ? res.data : (res.data.tags || []);
   } catch {}
 }
@@ -282,7 +283,7 @@ function cancelAddFolder() { showAddInput.value = false; addingName.value = ""; 
 async function confirmAddFolder() {
   if (!addingName.value.trim()) return;
   try {
-    await createFolder(addingName.value.trim(), addingParentId.value);
+    await createFolder(addingName.value.trim(), addingParentId.value, props.kbId);
     showAddInput.value = false;
     addingName.value = "";
     await loadFolders();
@@ -330,7 +331,7 @@ function cancelAddTag() { showTagInput.value = false; tagInputName.value = ""; }
 async function confirmAddTag() {
   if (!tagInputName.value.trim()) return;
   try {
-    await createTag(tagInputName.value.trim());
+    await createTag(tagInputName.value.trim(), props.kbId);
     showTagInput.value = false;
     tagInputName.value = "";
     await loadTags();
