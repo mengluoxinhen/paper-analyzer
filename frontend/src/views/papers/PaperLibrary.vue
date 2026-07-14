@@ -233,6 +233,7 @@ function debouncedSearch() {
 function emitSearch() { emit("search", { keyword: keyword.value, folder_id: activeFolderId.value === "__uncat__" ? -1 : activeFolderId.value, tag: activeTag.value }); }
 
 async function loadFolders() {
+  if (!props.kbId) return;
   try {
     const res = await getFolders(props.kbId);
     folders.value = res.data.folders || [];
@@ -242,6 +243,7 @@ async function loadFolders() {
 }
 
 async function loadTags() {
+  if (!props.kbId) return;
   try {
     const res = await getTags(props.kbId);
     tags.value = Array.isArray(res.data) ? res.data : (res.data.tags || []);
@@ -361,6 +363,13 @@ function onFileChange(f) {
 
 function handleConfirm() { emit("upload", { title: uploadTitle.value, pdfFile: pdfFile.value, folderId: uploadFolderId.value }); uploadVisible.value = false; uploadTitle.value = ""; uploadFolderId.value = null; pdfFile.value = null; selectedFileName.value = ""; }
 function formatTime(t) { if (!t) return ""; return new Date(t).toLocaleDateString("zh-CN"); }
+
+watch(() => props.kbId, () => {
+  activeFolderId.value = null;
+  activeTag.value = null;
+  loadFolders();
+  loadTags();
+});
 
 onMounted(() => { loadFolders(); loadTags(); });
 watch(() => props.papers, () => {}, { deep: true });
