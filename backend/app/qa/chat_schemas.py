@@ -1,4 +1,4 @@
-from datetime import datetime
+﻿from datetime import datetime
 from pydantic import BaseModel
 
 
@@ -12,10 +12,9 @@ class QARebuildResponse(BaseModel):
     message: str = ""
 
 
-# ── Chat Session ──
-
 class ChatSessionCreate(BaseModel):
     paper_id: str | None = None
+    kb_id: str | None = None
     title: str = ""
 
 
@@ -23,6 +22,7 @@ class ChatSessionItem(BaseModel):
     id: str
     title: str
     paper_id: str | None = None
+    kb_id: str | None = None
     created_at: datetime | None = None
     message_count: int = 0
     preview: str = ""

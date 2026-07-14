@@ -1,4 +1,4 @@
-import json
+﻿import json
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,8 +17,6 @@ from app.qa.chat_schemas import (
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
-# ── Markdown output format instruction (reused across prompts) ──
-
 _MD_FORMAT = """
 【输出格式】只输出纯 Markdown 源码，不要添加任何开场白、过渡语、总结语。严格遵循以下规则：
 
@@ -29,24 +27,24 @@ _MD_FORMAT = """
 - 不要输出"好的""以下是回答""总结一下"等废话
 """
 
-# ── Session management ──
-
 @router.get("/sessions", response_model=ChatSessionListResponse)
 async def list_sessions(
     paper_id: str | None = Query(None, description="Filter by paper; omit for global"),
+    kb_id: str | None = Query(None, description="Filter by knowledge base"),
     db: AsyncSession = DBSession,
 ):
-    sessions = await get_chat_sessions(db, paper_id=paper_id)
+    sessions = await get_chat_sessions(db, paper_id=paper_id, kb_id=kb_id)
     return {"sessions": sessions}
 
 
 @router.post("/sessions")
 async def create_session(body: ChatSessionCreate, db: AsyncSession = DBSession):
-    session = await create_chat_session(db, title=body.title, paper_id=body.paper_id)
+    session = await create_chat_session(db, title=body.title, paper_id=body.paper_id, kb_id=body.kb_id)
     return {
         "id": session.id,
         "title": session.title,
         "paper_id": session.paper_id,
+        "kb_id": session.knowledge_base_id,
         "created_at": session.created_at.isoformat() if session.created_at else None,
         "message_count": 0,
         "preview": "",
@@ -69,8 +67,6 @@ async def remove_session(session_id: str, db: AsyncSession = DBSession):
     return {"ok": True}
 
 
-# ── Messages ──
-
 @router.get("/sessions/{session_id}/messages")
 async def list_messages(session_id: str, db: AsyncSession = DBSession):
     session = await get_chat_session(db, session_id)
@@ -78,19 +74,10 @@ async def list_messages(session_id: str, db: AsyncSession = DBSession):
         raise HTTPException(404, "会话不存在")
     msgs = await get_chat_messages(db, session_id)
     return [
-        {
-            "id": m.id,
-            "session_id": m.session_id,
-            "role": m.role,
-            "content": m.content,
-            "tokens": m.tokens,
-            "created_at": m.created_at.isoformat() if m.created_at else None,
-        }
+        {"id": m.id, "session_id": m.session_id, "role": m.role, "content": m.content, "tokens": m.tokens, "created_at": m.created_at.isoformat() if m.created_at else None}
         for m in reversed(msgs)
     ]
 
-
-# ── Send message (streaming) ──
 
 @router.post("/sessions/{session_id}/send")
 async def send_message(session_id: str, body: ChatSendRequest, db: AsyncSession = DBSession):
@@ -114,42 +101,31 @@ async def send_message(session_id: str, body: ChatSendRequest, db: AsyncSession 
     history_for_prompt = history[:-1] if len(history) > 1 else []
 
     paper_id = session.paper_id
+    kb_id = session.knowledge_base_id
 
     async def event_stream():
         from app.papers.service import _get_llm_config
         from openai import AsyncOpenAI
-
         cfg = await _get_llm_config(db)
         client = AsyncOpenAI(api_key=cfg["api_key"], base_url=cfg["api_base"])
         full_text = ""
 
         if paper_id:
-            # ── Paper chat ──
             paper = await papers_crud.get_paper(db, paper_id)
             if not paper or not paper.md_content:
                 yield f"data: __ERROR__论文不存在或未解析\n\n".encode("utf-8")
                 return
-
             content = paper.md_content
-
-            system_prompt = (
-                "你是一个专业的学术论文问答助手。请严格根据以下论文内容回答用户问题。"
-                + _MD_FORMAT
-            )
+            system_prompt = "你是一个专业的学术论文问答助手。请严格基于提供的论文内容回答用户问题，不要编造信息，如不确定请说明。" + _MD_FORMAT
+            max_content_len = 12000
+            if len(content) > max_content_len:
+                content = content[:max_content_len] + "\n\n[论文内容过长，已截断]"
             msgs = [{"role": "system", "content": system_prompt}]
-            msgs.append({"role": "user", "content": f"以下是论文全文内容：\n\n{content[:30000]}"})
-            for h in history_for_prompt[-10:]:
+            for h in history_for_prompt[-6:]:
                 msgs.append(h)
-            msgs.append({"role": "user", "content": message})
-
+            msgs.append({"role": "user", "content": f"论文内容：\n\n{content}\n\n问题：{message}"})
             try:
-                stream = await client.chat.completions.create(
-                    model=cfg["model"],
-                    messages=msgs,
-                    max_tokens=cfg.get("max_tokens", 2048),
-                    temperature=cfg.get("temperature", 0.3),
-                    stream=True,
-                )
+                stream = await client.chat.completions.create(model=cfg["model"], messages=msgs, max_tokens=cfg.get("max_tokens", 2048), temperature=cfg.get("temperature", 0.3), stream=True)
                 async for chunk in stream:
                     delta = chunk.choices[0].delta
                     if delta.content:
@@ -159,92 +135,53 @@ async def send_message(session_id: str, body: ChatSendRequest, db: AsyncSession 
                 yield f"data: __ERROR__{str(e)}\n\n".encode("utf-8")
                 return
         else:
-            # ── Global chat ──
             from app.qa.router import _rewrite_query
             from app.qa import embedder, indexer
-
-            search_query = await _rewrite_query(message, db)
-
+            search_query = await _rewrite_query(message, db, kb_id or "")
             if "NOT_RELEVANT" in search_query:
-                # No relevant papers: plain LLM
                 system_prompt = "你是一个智能AI助手，可以回答用户的各种问题。" + _MD_FORMAT
                 msgs = [{"role": "system", "content": system_prompt}]
-                for h in history_for_prompt[-10:]:
-                    msgs.append(h)
+                for h in history_for_prompt[-10:]: msgs.append(h)
                 msgs.append({"role": "user", "content": message})
                 try:
-                    stream = await client.chat.completions.create(
-                        model=cfg["model"],
-                        messages=msgs,
-                        max_tokens=cfg.get("max_tokens", 2048),
-                        temperature=cfg.get("temperature", 0.3),
-                        stream=True,
-                    )
+                    stream = await client.chat.completions.create(model=cfg["model"], messages=msgs, max_tokens=cfg.get("max_tokens", 2048), temperature=cfg.get("temperature", 0.3), stream=True)
                     async for chunk in stream:
                         delta = chunk.choices[0].delta
-                        if delta.content:
-                            full_text += delta.content
-                            yield f"data: {delta.content}\n\n".encode("utf-8")
+                        if delta.content: full_text += delta.content; yield f"data: {delta.content}\n\n".encode("utf-8")
                 except Exception as e:
                     yield f"data: __ERROR__{str(e)}\n\n".encode("utf-8")
                     return
             else:
-                # RAG-based response
                 try:
                     query_emb = await embedder.get_embedding(search_query)
                 except Exception as e:
                     yield f"data: __ERROR__Embedding 请求失败: {e}\n\n".encode("utf-8")
                     return
-
-                chunks = indexer.search_chunks(query_emb, top_k=8)
-
+                chunks = indexer.search_chunks(query_emb, kb_id or "", top_k=8)
                 if not chunks:
-                    # Fallback to plain LLM
                     system_prompt = "你是一个智能AI助手，可以回答用户的各种问题。" + _MD_FORMAT
                     msgs = [{"role": "system", "content": system_prompt}]
-                    for h in history_for_prompt[-10:]:
-                        msgs.append(h)
+                    for h in history_for_prompt[-10:]: msgs.append(h)
                     msgs.append({"role": "user", "content": message})
                     try:
-                        stream = await client.chat.completions.create(
-                            model=cfg["model"],
-                            messages=msgs,
-                            max_tokens=cfg.get("max_tokens", 2048),
-                            temperature=cfg.get("temperature", 0.3),
-                            stream=True,
-                        )
+                        stream = await client.chat.completions.create(model=cfg["model"], messages=msgs, max_tokens=cfg.get("max_tokens", 2048), temperature=cfg.get("temperature", 0.3), stream=True)
                         async for chunk in stream:
                             delta = chunk.choices[0].delta
-                            if delta.content:
-                                full_text += delta.content
-                                yield f"data: {delta.content}\n\n".encode("utf-8")
+                            if delta.content: full_text += delta.content; yield f"data: {delta.content}\n\n".encode("utf-8")
                     except Exception as e:
                         yield f"data: __ERROR__{str(e)}\n\n".encode("utf-8")
                         return
                 else:
-                    # RAG prompt
                     from app.qa.router import _build_qa_prompt
                     prompt = _build_qa_prompt(message, chunks)
-
                     if history_for_prompt:
-                        history_text = "\n\n".join(
-                            f"{h['role']}: {h['content']}" for h in history_for_prompt[-6:]
-                        )
+                        history_text = "\n\n".join(f"{h['role']}: {h['content']}" for h in history_for_prompt[-6:])
                         prompt = f"历史对话：\n{history_text}\n\n{prompt}"
-
                     try:
-                        stream = await client.chat.completions.create(
-                            model=cfg["model"],
-                            messages=[{"role": "user", "content": prompt}],
-                            max_tokens=cfg.get("max_tokens", 2048),
-                            temperature=cfg.get("temperature", 0.3),
-                            stream=True,
-                        )
+                        stream = await client.chat.completions.create(model=cfg["model"], messages=[{"role": "user", "content": prompt}], max_tokens=cfg.get("max_tokens", 2048), temperature=cfg.get("temperature", 0.3), stream=True)
                         async for chunk in stream:
                             delta = chunk.choices[0].delta
-                            if delta.content:
-                                full_text += delta.content
-                                yield f"data: {delta.content}\n\n".encode("utf-8")
+                            if delta.content: full_text += delta.content; yield f"data: {delta.content}\n\n".encode("utf-8")
                     except Exception as e:
                         yield f"data: __ERROR__{str(e)}\n\n".encode("utf-8")
                         return
