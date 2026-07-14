@@ -57,6 +57,33 @@
       </div>
     </aside>
     <SettingsDialog v-model:visible="settingsVisible" />
+    <div class="kb-dialog-overlay" v-if="showKbDialog" @click.self="showKbDialog = false">
+      <div class="kb-dialog">
+        <h4>管理知识库</h4>
+        <div class="kb-list">
+          <div v-for="kb in kbStore.list" :key="kb.id" class="kb-item" :class="{ active: kb.id === kbStore.currentId }" @click="kbStore.select(kb.id); showKbDialog = false">
+            <div class="kb-item-info">
+              <span class="kb-item-name">{{ kb.is_shared ? '共享库' : kb.name }}</span>
+              <span class="kb-item-count">{{ kb.paper_count }} 篇</span>
+            </div>
+            <div class="kb-item-actions" v-if="!kb.is_shared">
+              <button class="kb-action-btn" @click.stop="startRenameKb(kb)">&#9998;</button>
+              <button class="kb-action-btn danger" @click.stop="handleDeleteKb(kb)">&#10005;</button>
+            </div>
+          </div>
+        </div>
+        <div class="kb-create-row">
+          <input v-model="newKbName" placeholder="新知识库名称..." class="kb-create-input" @keydown.enter="handleCreateKb" />
+          <button class="kb-create-btn" @click="handleCreateKb" :disabled="!newKbName.trim()">创建</button>
+        </div>
+        <div v-if="editingKbId" class="kb-rename-row">
+          <input v-model="editingKbName" placeholder="新名称..." class="kb-rename-input" @keydown.enter="confirmRenameKb" @keydown.escape="cancelRenameKb" />
+          <button class="kb-create-btn" @click="confirmRenameKb">确认</button>
+          <button class="kb-cancel-btn" @click="cancelRenameKb">取消</button>
+        </div>
+        <button class="kb-close-btn" @click="showKbDialog = false">关闭</button>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -100,6 +127,23 @@ function onKbChange() {
     store.currentSummary = null;
     store.fetchList();
   }
+}
+
+
+async function handleCreateKb() {
+  const name = newKbName.value.trim();
+  if (!name) return;
+  try { await kbStore.create(name, ""); newKbName.value = ""; store.setKbId(kbStore.currentId); store.fetchList(); } catch(e) {}
+}
+function startRenameKb(kb) { editingKbId.value = kb.id; editingKbName.value = kb.name; }
+async function confirmRenameKb() {
+  if (!editingKbName.value.trim()) return;
+  try { await kbStore.update(editingKbId.value, { name: editingKbName.value.trim() }); editingKbId.value = null; editingKbName.value = ''; } catch(e) {}
+}
+function cancelRenameKb() { editingKbId.value = null; editingKbName.value = ''; }
+async function handleDeleteKb(kb) {
+  if (!confirm('确定删除知识库"' + kb.name + '"吗？所有论文将被永久删除。')) return;
+  try { await kbStore.remove(kb.id); if (kbStore.currentId) { store.setKbId(kbStore.currentId); store.currentPaper = null; store.currentSummary = null; store.fetchList(); } } catch(e) {}
 }
 
 function startResize(e) {
@@ -289,6 +333,35 @@ async function streamSummarize(paperId) {
 </script>
 
 <style scoped>
+
+/* KB Dialog */
+.kb-dialog-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.3); backdrop-filter: blur(4px); z-index: 2000; display: flex; align-items: center; justify-content: center; }
+.kb-dialog { background: var(--bg-card); border-radius: var(--radius-xl); box-shadow: var(--shadow-lg); padding: 24px; width: 400px; max-width: 90vw; }
+.kb-dialog h4 { font-size: 16px; font-weight: 600; margin-bottom: 16px; }
+.kb-list { max-height: 240px; overflow-y: auto; margin-bottom: 12px; }
+.kb-item { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-radius: var(--radius-md); cursor: pointer; transition: background var(--transition-fast); }
+.kb-item:hover { background: var(--bg-hover); }
+.kb-item.active { background: var(--accent-light); }
+.kb-item-info { display: flex; flex-direction: column; }
+.kb-item-name { font-size: 13px; font-weight: 500; color: var(--text-primary); }
+.kb-item-count { font-size: 11px; color: var(--text-tertiary); margin-top: 2px; }
+.kb-item-actions { display: flex; gap: 4px; opacity: 0; transition: opacity var(--transition-fast); }
+.kb-item:hover .kb-item-actions { opacity: 1; }
+.kb-action-btn { width: 26px; height: 26px; border: none; border-radius: var(--radius-sm); background: var(--bg-hover); cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--text-secondary); font-size: 14px; }
+.kb-action-btn:hover { color: var(--accent); background: var(--accent-light); }
+.kb-action-btn.danger:hover { color: #ef4444; background: #fee2e2; }
+.kb-create-row { display: flex; gap: 8px; margin-bottom: 8px; }
+.kb-create-input { flex: 1; padding: 6px 10px; border: 1px solid var(--border-light); border-radius: var(--radius-sm); font-size: 12px; font-family: var(--font-sans); outline: none; background: var(--bg-hover); }
+.kb-create-input:focus { border-color: var(--accent); }
+.kb-create-btn { padding: 6px 14px; border: none; border-radius: var(--radius-sm); background: var(--accent); color: #fff; font-size: 12px; cursor: pointer; font-family: var(--font-sans); }
+.kb-create-btn:disabled { background: var(--border-light); color: var(--text-tertiary); cursor: not-allowed; }
+.kb-create-btn:hover:not(:disabled) { background: var(--accent-hover); }
+.kb-cancel-btn { padding: 6px 14px; border: 1px solid var(--border-light); border-radius: var(--radius-sm); background: var(--bg-card); color: var(--text-secondary); font-size: 12px; cursor: pointer; font-family: var(--font-sans); }
+.kb-close-btn { display: block; width: 100%; margin-top: 12px; padding: 8px; border: 1px solid var(--border-light); border-radius: var(--radius-md); background: var(--bg-card); color: var(--text-secondary); font-size: 13px; cursor: pointer; font-family: var(--font-sans); }
+.kb-close-btn:hover { background: var(--bg-hover); }
+.kb-rename-row { display: flex; gap: 8px; margin-bottom: 8px; }
+.kb-rename-input { flex: 1; padding: 6px 10px; border: 1px solid var(--accent); border-radius: var(--radius-sm); font-size: 12px; font-family: var(--font-sans); outline: none; background: var(--bg-card); }
+
 /* KB Selector */
 .kb-selector { padding: 8px 12px; border-bottom: 1px solid var(--border-light); flex-shrink: 0; }
 .kb-selector-inner { display: flex; gap: 4px; align-items: center; }

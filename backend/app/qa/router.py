@@ -10,6 +10,7 @@ from app.qa import schemas, embedder, indexer
 
 router = APIRouter(prefix="/api/qa", tags=["qa"])
 
+# KB-id-keyed cache for paper topics summary. Invalidated on index rebuild only.
 _paper_topics_cache = {}
 
 

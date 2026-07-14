@@ -50,6 +50,10 @@ class FolderCreate(BaseModel):
     knowledge_base_id: str
 
 
+class FolderRename(BaseModel):
+    name: str
+
+
 class FolderListResponse(BaseModel):
     folders: list['FolderResponse'] = []
     uncategorized_count: int = 0

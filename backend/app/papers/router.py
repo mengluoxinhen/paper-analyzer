@@ -79,7 +79,7 @@ async def create_folder(body: schemas.FolderCreate, user_id: str = Query(default
 
 
 @folder_router.put("/{folder_id}", response_model=schemas.FolderResponse)
-async def rename_folder(folder_id: str, body: schemas.FolderCreate, user_id: str = Query(default=DEFAULT_USER_ID), db: AsyncSession = DBSession):
+async def rename_folder(folder_id: str, body: schemas.FolderRename, user_id: str = Query(default=DEFAULT_USER_ID), db: AsyncSession = DBSession):
     folder = await crud.get_folder(db, folder_id)
     if not folder:
         raise HTTPException(404, "文件夹不存在")

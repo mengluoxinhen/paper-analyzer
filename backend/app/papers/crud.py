@@ -1,7 +1,11 @@
 ﻿from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, delete, insert
 from app.papers.model import Paper, Folder, Tag, KnowledgeBase, paper_tags, Summary, Conversation, Extraction, ChatSession
+import os
+import shutil
+from app.config import get_settings
 from app.qa import indexer
+from datetime import datetime
 from difflib import SequenceMatcher
 
 
@@ -18,18 +22,27 @@ async def get_knowledge_bases(db: AsyncSession, user_id: str = DEFAULT_USER_ID) 
         ).order_by(KnowledgeBase.is_shared.desc(), KnowledgeBase.created_at.asc())
     )
     kbs = list(result.scalars().all())
+    # Single GROUP BY query for all paper counts
+    kb_ids = [kb.id for kb in kbs]
+    counts = {}
+    if kb_ids:
+        cnt_result = await db.execute(
+            select(Paper.knowledge_base_id, func.count(Paper.id))
+            .where(Paper.knowledge_base_id.in_(kb_ids))
+            .group_by(Paper.knowledge_base_id)
+        )
+        for kb_id, cnt in cnt_result.fetchall():
+            counts[kb_id] = cnt
+
     out = []
     for kb in kbs:
-        cnt_result = await db.execute(
-            select(func.count(Paper.id)).where(Paper.knowledge_base_id == kb.id)
-        )
         out.append({
             "id": kb.id,
             "name": kb.name,
             "description": kb.description or "",
             "user_id": kb.user_id,
             "is_shared": kb.is_shared,
-            "paper_count": cnt_result.scalar() or 0,
+            "paper_count": counts.get(kb.id, 0),
             "created_at": kb.created_at,
         })
     return out
@@ -80,8 +93,6 @@ async def delete_knowledge_base(db: AsyncSession, kb_id: str) -> bool:
     await db.delete(kb)
     await db.commit()
 
-    import os, shutil
-    from app.config import get_settings
     kb_chroma_dir = os.path.join(get_settings().qa_chroma_dir, f"kb_{kb_id}")
     if os.path.isdir(kb_chroma_dir):
         shutil.rmtree(kb_chroma_dir, ignore_errors=True)
@@ -223,7 +234,7 @@ async def get_tags(db: AsyncSession, kb_id: str) -> list[dict]:
         )
         out.append({
             "id": t.id, "name": t.name, "knowledge_base_id": t.knowledge_base_id,
-            "paper_count": cnt_result.scalar() or 0, "created_at": t.created_at
+            "paper_count": counts.get(kb.id, 0), "created_at": t.created_at
         })
     return out
 
@@ -237,6 +248,7 @@ async def create_tag(db: AsyncSession, name: str, kb_id: str) -> Tag:
 
 
 async def delete_tag(db: AsyncSession, tag_id: str) -> bool:
+    """Permission check (shared KB admin-only) handled in router layer."""
     tag = await db.get(Tag, tag_id)
     if not tag:
         return False
@@ -428,7 +440,7 @@ async def approve_paper(db: AsyncSession, paper_id: str) -> Paper | None:
     if not paper:
         return None
     paper.review_status = "approved"
-    paper.reviewed_at = func.now()
+    paper.reviewed_at = datetime.now()
     await db.commit()
     await db.refresh(paper)
     return paper
@@ -440,7 +452,7 @@ async def reject_paper(db: AsyncSession, paper_id: str, comment: str) -> Paper |
         return None
     paper.review_status = "rejected"
     paper.review_comment = comment
-    paper.reviewed_at = func.now()
+    paper.reviewed_at = datetime.now()
     await db.commit()
     await db.refresh(paper)
     return paper
