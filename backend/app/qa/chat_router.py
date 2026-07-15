@@ -1,4 +1,4 @@
-import json
+﻿import json
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -144,16 +144,16 @@ async def send_message(session_id: str, body: ChatSendRequest, db: AsyncSession 
             try:
                 query_emb = await embedder.get_embedding(search_query)
             except Exception as e:
-                yield f"data: __ERROR__Embedding ????: {e}\n\n".encode("utf-8")
+                yield f"data: __ERROR__Embedding 请求失败: {e}\n\n".encode("utf-8")
                 return
             chunks = indexer.search_chunks(query_emb, kb_id or "", top_k=8)
             if not chunks:
-                yield f"data: {json.dumps('??????????????????????????????')}\n\n".encode("utf-8")
+                yield f"data: {json.dumps('未在知识库中找到与您问题相关的论文内容，请尝试更具体的问题。')}\n\n".encode("utf-8")
             else:
                 prompt = _build_qa_prompt(message, chunks)
                 if history_for_prompt:
                     history_text = "\n\n".join(f"{h['role']}: {h['content']}" for h in history_for_prompt[-6:])
-                    prompt = f"?????\n{history_text}\n\n{prompt}"
+                    prompt = f"历史对话：\n{history_text}\n\n{prompt}"
                 try:
                     stream = await client.chat.completions.create(model=cfg["model"], messages=[{"role": "user", "content": prompt}], max_tokens=cfg.get("max_tokens", 2048), temperature=cfg.get("temperature", 0.3), stream=True)
                     async for chunk in stream:
