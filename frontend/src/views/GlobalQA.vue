@@ -124,6 +124,7 @@ import { renderMarkdown } from "../utils/marked-setup.js";
 import { rebuildIndex } from "../api/qa.js";
 import { getChatSessions, createChatSession, deleteChatSession, getChatMessages, sendChatMessage } from "../api/chat.js";
 
+const kbStore = useKnowledgeBaseStore();
 const messages = ref([]);
 const input = ref("");
 const streamText = ref("");

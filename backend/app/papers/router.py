@@ -1,10 +1,10 @@
-﻿import os
+import os
 import json
 import hashlib
 import aiofiles
 from datetime import datetime
 from fastapi import APIRouter, UploadFile, File, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.deps import DBSession
@@ -187,10 +187,14 @@ async def upload_paper(
     if kb.is_shared:
         dup = await crud.check_duplicate_md5(db, kb_id, file_md5)
         if dup:
-            # 删除刚上传的文件
-            try: os.unlink(pdf_path)
-            except OSError: pass
-            raise HTTPException(400, f"该论文已存在于共享库中：{dup.title or dup.filename}")
+            if dup.review_status == "pending":
+                # 替换旧的待审核论文
+                await crud.delete_paper(db, dup.id)
+            else:
+                # 删除刚上传的文件
+                try: os.unlink(pdf_path)
+                except OSError: pass
+                raise HTTPException(400, f"该论文已存在于共享库中：{dup.title or dup.filename}")
 
     # 验证 folder_id
     if folder_id is not None:
@@ -263,6 +267,13 @@ async def parse_paper(paper_id: str, db: AsyncSession = DBSession):
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
+@router.get("/{paper_id}/pdf")
+async def get_paper_pdf(paper_id: str, db: AsyncSession = DBSession):
+    paper = await crud.get_paper(db, paper_id)
+    if not paper or not paper.pdf_path or not os.path.isfile(paper.pdf_path):
+        raise HTTPException(404, "PDF文件不存在")
+    return FileResponse(paper.pdf_path, media_type="application/pdf", filename=paper.filename, content_disposition_type="inline")
+
 @router.put("/{paper_id}/title", response_model=schemas.PaperResponse)
 async def update_title(paper_id: str, body: schemas.PaperCreate, user_id: str = Query(default=DEFAULT_USER_ID), db: AsyncSession = DBSession):
     paper = await crud.get_paper(db, paper_id)
@@ -321,7 +332,7 @@ async def summarize_paper(paper_id: str, db: AsyncSession = DBSession):
     existing = await crud.get_summary(db, paper_id)
     if existing and existing.full_text:
         import json
-        cached_data = json.dumps({"problem": existing.problem or "", "conclusion": existing.conclusion or "", "conditions": existing.conditions or "", "full_text": existing.full_text or ""})
+        cached_data = json.dumps({"problem": existing.problem or "", "conclusion": existing.conclusion or "", "conditions": existing.conditions or "", "innovation": existing.innovation or "", "paper_type": existing.paper_type or "", "full_text": existing.full_text or ""})
         async def cached_stream():
             yield f"data: __CACHED__{cached_data}\n\n".encode("utf-8")
             yield f"data: [DONE]\n\n".encode("utf-8")
@@ -334,11 +345,18 @@ async def summarize_paper(paper_id: str, db: AsyncSession = DBSession):
         async for chunk in service.stream_summarize(content, db):
             if chunk.startswith("__DONE__"):
                 full_text = chunk[7:]; break
-            yield f"data: {chunk}\n\n".encode("utf-8")
+            yield f"data: {json.dumps(chunk)}\n\n".encode("utf-8")
         sections = service.parse_summary_text(full_text)
         await crud.create_summary(db, paper_id, problem=sections.get("problem",""), conclusion=sections.get("conclusion",""), conditions=sections.get("conditions",""), innovation=sections.get("innovation",""), paper_type=sections.get("paper_type",""), full_text=full_text, model="llm", tokens=utils.count_tokens_approx(full_text))
         yield f"data: [DONE]\n\n".encode("utf-8")
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+@router.get("/{paper_id}/summary", response_model=schemas.SummaryResponse)
+async def get_paper_summary(paper_id: str, db: AsyncSession = DBSession):
+    existing = await crud.get_summary(db, paper_id)
+    if not existing:
+        raise HTTPException(404, "暂无总结")
+    return existing
 
 
 @router.post("/compare")
@@ -349,7 +367,7 @@ async def compare_papers(body: schemas.CompareRequest, db: AsyncSession = DBSess
         if paper: contents.append({"title": paper.title or paper.filename, "content": paper.md_content})
     if len(contents) < 2: raise HTTPException(400, "至少需要2篇论文进行对比")
     async def event_stream():
-        async for chunk in service.stream_compare(contents, db): yield f"data: {chunk}\n\n".encode("utf-8")
+        async for chunk in service.stream_compare(contents, db): yield f"data: {json.dumps(chunk)}\n\n".encode("utf-8")
         yield f"data: [DONE]\n\n".encode("utf-8")
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 

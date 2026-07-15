@@ -74,7 +74,7 @@ def parse_summary_text(full_text: str) -> dict:
     """Robust summary parser that handles various LLM header formats."""
     import re
 
-    sections = {"problem": "", "conclusion": "", "conditions": ""}
+    sections = {"problem": "", "conclusion": "", "conditions": "", "innovation": "", "paper_type": ""}
     current = None
 
     # Expanded markers: (keyword, match_exact)
@@ -86,7 +86,17 @@ def parse_summary_text(full_text: str) -> dict:
         ("研究问题", "problem"),
         ("研究目的", "problem"),
         ("研究目标", "problem"),
+        ("研究概述", "problem"),
         ("问题", "problem"),       # generic, must be exact (no suffix)
+        # innovation
+        ("核心创新点", "innovation"),
+        ("主要创新点", "innovation"),
+        ("主要创新", "innovation"),
+        ("创新点", "innovation"),
+        # paper_type
+        ("论文类型", "paper_type"),
+        ("文章类型", "paper_type"),
+        ("研究类型", "paper_type"),
         # conclusion
         ("结论", "conclusion"),
         ("主要结论", "conclusion"),
@@ -96,6 +106,7 @@ def parse_summary_text(full_text: str) -> dict:
         ("实验条件", "conditions"),
         ("仿真条件", "conditions"),
         ("实验工况", "conditions"),
+        ("条件与方法", "conditions"),
     ]
 
     for line in full_text.split("\n"):

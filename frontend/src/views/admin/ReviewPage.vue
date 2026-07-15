@@ -43,7 +43,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from "vue";
+import { ref, onMounted, computed } from "vue";
 import { useKnowledgeBaseStore } from "../../stores/knowledgeBase";
 import { getPendingPapers, approvePaper, rejectPaper } from "../../api/admin";
 
@@ -55,13 +55,13 @@ const rejectComment = ref("");
 
 onMounted(async () => {
   await kbStore.fetchList();
-  kbStore.restoreSelection();
   loadPapers();
 });
 
 async function loadPapers() {
   try {
-    const res = await getPendingPapers(kbStore.currentId);
+    if (!sharedKbId.value) return;
+    const res = await getPendingPapers(sharedKbId.value);
     papers.value = res.data.papers || [];
   } catch (e) {
     console.error(e);

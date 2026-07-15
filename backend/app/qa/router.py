@@ -1,4 +1,4 @@
-﻿import json
+import json
 import re
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -109,6 +109,19 @@ def _build_qa_prompt(question: str, chunks: list[dict]) -> str:
 ### 第一个要点
 
 这是该要点的详细解释。其中使用 **粗体** 强调关键概念。
+
+### 第二个要点
+
+- 使用无序列表列出子项
+- 每个子项中也可以包含 **粗体**
+
+| 列A | 列B |
+| --- | --- |
+| 数据1 | 数据2 |
+
+### 第三个要点
+
+正文内容...
 
 {sources_text}
 

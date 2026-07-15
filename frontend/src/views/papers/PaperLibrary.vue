@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="library">
     <div class="library-header">
       <h3>论文库</h3>
@@ -138,7 +138,7 @@
             <span class="paper-parse-msg">{{ parseProgressMap[paper.id].message }}</span>
           </div>
         </div>
-        <el-popconfirm title="确定删除这篇论文？" confirm-button-text="删除" cancel-button-text="取消" @confirm="$emit('delete', paper)" @click.stop>
+        <el-popconfirm title="确定删除这篇论文？" confirm-button-text="删除" cancel-button-text="取消" @confirm="$emit('delete', paper.id)" @click.stop>
           <template #reference>
             <el-button size="small" text class="delete-btn"><el-icon :size="14"><Delete /></el-icon></el-button>
           </template>
@@ -361,7 +361,7 @@ function onFileChange(f) {
   selectedFileName.value = f.name;
 }
 
-function handleConfirm() { emit("upload", { title: uploadTitle.value, pdfFile: pdfFile.value, folderId: uploadFolderId.value }); uploadVisible.value = false; uploadTitle.value = ""; uploadFolderId.value = null; pdfFile.value = null; selectedFileName.value = ""; }
+function handleConfirm() { emit("upload", uploadTitle.value, pdfFile.value, uploadFolderId.value); uploadVisible.value = false; uploadTitle.value = ""; uploadFolderId.value = null; pdfFile.value = null; selectedFileName.value = ""; }
 function formatTime(t) { if (!t) return ""; return new Date(t).toLocaleDateString("zh-CN"); }
 
 watch(() => props.kbId, () => {

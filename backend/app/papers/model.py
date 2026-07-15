@@ -1,4 +1,4 @@
-﻿from datetime import datetime
+from datetime import datetime
 import uuid
 
 from sqlalchemy import Column, Integer, String, Text, DateTime, Boolean, JSON, func, Table, UniqueConstraint
@@ -81,6 +81,8 @@ class Summary(Base):
     problem = Column(Text, default="")
     conclusion = Column(Text, default="")
     conditions = Column(Text, default="")
+    innovation = Column(Text, default="")
+    paper_type = Column(String(100), default="")
     full_text = Column(LONGTEXT, default="")
     model = Column(String(100), default="")
     tokens = Column(Integer, default=0)

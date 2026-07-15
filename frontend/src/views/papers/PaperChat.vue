@@ -47,7 +47,13 @@
       </div>
 
       <div class="chat-body" ref="chatBody">
-        <div v-if="summary && !currentSessionId" class="summary-block">
+        <div v-if="summarizing && !currentSessionId" class="summary-block">
+          <div class="summary-header">📝 AI 正在分析论文...</div>
+          <div class="summary-card streaming-card">
+            <div class="streaming-text" v-html="renderMsg(summaryStream)"></div>
+            <span class="typing-cursor"></span>
+          </div>
+        </div><div v-else-if="summary && !currentSessionId" class="summary-block">
           <div class="summary-header"><span>📝 论文总结</span><span v-if="summary.paper_type" class="paper-type-badge">{{ summary.paper_type }}</span><div class="summary-actions"><button class="action-btn" @click="copySummary" title="复制 Markdown"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button><button class="action-btn" @click="downloadSummary" title="下载 Markdown"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></button><button class="action-btn" @click="$emit('regenerate')" title="重新生成总结"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button></div></div>
 
           <div class="summary-card">
@@ -72,13 +78,7 @@
           </div>
         </div>
 
-        <div v-else-if="summarizing && !currentSessionId" class="summary-block">
-          <div class="summary-header">📝 AI 正在分析论文...</div>
-          <div class="summary-card streaming-card">
-            <div class="streaming-text" v-html="renderMsg(summaryStream)"></div>
-            <span class="typing-cursor"></span>
-          </div>
-        </div>
+        
 
         <div
           v-if="(summary || summarizing) && !currentSessionId"
@@ -92,17 +92,17 @@
           class="chat-divider"
         >— 对话 —</div>
 
-        <div v-for="(msg, idx) in messages" :key="idx" class="chat-message" :class="msg.role">
+        <div v-for="msg in messages" :key="msg._id" class="chat-message" :class="msg.role">
           <div class="msg-avatar"><span>{{ msg.role === 'user' ? '你' : 'AI' }}</span></div>
           <div class="msg-bubble">
-            <div class="msg-content" v-html="renderMsg(msg.content)"></div>
+            <div class="msg-content" v-html="renderMarkdown(msg.content)"></div>
           </div>
         </div>
 
         <div v-if="streamLoading" class="chat-message assistant">
           <div class="msg-avatar"><span>AI</span></div>
           <div class="msg-bubble">
-            <div class="msg-content" v-html="renderMsg(streamText)"></div>
+            <div class="msg-content" v-html="renderMarkdown(streamText)"></div>
             <span class="typing-cursor"></span>
           </div>
         </div>
@@ -194,7 +194,8 @@ async function switchSession(sessionId) {
   streamLoading.value = false;
   try {
     const res = await getChatMessages(sessionId);
-    messages.value = (res.data || []).map(m => ({ role: m.role, content: m.content }));
+    messages.value = (res.data || []).map(m => ({ _id: m.id || Date.now() + Math.random(), role: m.role, content: m.content }));
+
     await nextTick();
     scrollToBottom();
   } catch {
@@ -225,7 +226,7 @@ async function sendMessage() {
 
   const userMsg = input.value.trim();
   input.value = "";
-  messages.value.push({ role: "user", content: userMsg });
+  messages.value.push({ _id: Date.now(), role: "user", content: userMsg });
   await nextTick();
   scrollToBottom();
 
@@ -240,15 +241,19 @@ async function sendMessage() {
       scrollToBottom();
     },
     async () => {
+      const fullText = streamText.value;
+      
+      messages.value.push({ _id: Date.now() + 1, role: "assistant", content: fullText });
+      await nextTick();
       streamLoading.value = false;
-      messages.value.push({ role: "assistant", content: streamText.value });
       streamText.value = "";
       await loadSessions();
+      await nextTick();
       scrollToBottom();
     },
     (err) => {
       streamLoading.value = false;
-      messages.value.push({ role: "assistant", content: "❌ 错误: " + err });
+      messages.value.push({ _id: Date.now() + 1, role: "assistant", content: "❌ 错误: " + err });
       streamText.value = "";
       scrollToBottom();
     }
@@ -353,6 +358,10 @@ function downloadSummary() {
 .msg-content :deep(p) { margin: 4px 0; }
 .msg-content :deep(p:first-child) { margin-top: 0; }
 .msg-content :deep(p:last-child) { margin-bottom: 0; }
+.msg-content :deep(h2) { font-size: 1.15em; font-weight: 700; margin: 14px 0 6px; color: var(--text-primary); border-bottom: 1px solid var(--border-light); padding-bottom: 4px; }
+.msg-content :deep(h3) { font-size: 1.05em; font-weight: 600; margin: 12px 0 4px; color: var(--text-primary); }
+.msg-content :deep(h4) { font-size: 1em; font-weight: 600; margin: 10px 0 4px; }
+.msg-content :deep(p) { margin: 4px 0; }
 .msg-content :deep(pre) { background: rgba(0,0,0,0.04); padding: var(--space-md); border-radius: var(--radius-sm); overflow-x: auto; font-size: 12px; margin: 6px 0; }
 .msg-content :deep(code) { font-family: var(--font-mono); font-size: 12px; background: rgba(0,0,0,0.05); padding: 1px 5px; border-radius: 3px; }
 .msg-content :deep(pre code) { background: none; padding: 0; }
@@ -380,9 +389,13 @@ function downloadSummary() {
 .summary-block { margin-bottom: 16px; }
 .summary-card { background: var(--bg-hover); border-radius: var(--radius-md); padding: var(--space-md); margin-bottom: 10px; }
 .summary-label { font-size: 12px; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+.summary-text :deep(h2) { font-size: 1.15em; font-weight: 700; margin: 10px 0 4px; border-bottom: 1px solid var(--border-light); padding-bottom: 3px; }
+.summary-text :deep(h3) { font-size: 1.05em; font-weight: 600; margin: 8px 0 3px; }
 .summary-text { font-size: var(--font-size-sm); color: var(--text-primary); line-height: 1.7; }
 .empty-hint { color: var(--text-tertiary); font-style: italic; }
 .streaming-card { border: 1px dashed var(--border-light); }
+.streaming-text :deep(h2) { font-size: 1.15em; font-weight: 700; margin: 10px 0 4px; border-bottom: 1px solid var(--border-light); padding-bottom: 3px; }
+.streaming-text :deep(h3) { font-size: 1.05em; font-weight: 600; margin: 8px 0 3px; }
 .streaming-text { font-size: var(--font-size-sm); color: var(--text-secondary); line-height: 1.7; }
 
 .msg-content :deep(.math-inline) { font-family: var(--font-mono); background: rgba(91,95,227,0.06); padding: 1px 4px; border-radius: 3px; font-style: italic; color: var(--accent); }

@@ -50,7 +50,7 @@ import { getTags, createTag, setPaperTags } from "../../api/papers";
 
 
 
-const props = defineProps({ paper: Object });
+const props = defineProps({ paper: Object, kbId: String });
 const emit = defineEmits(["tagCreated"]);
 
 
@@ -66,7 +66,7 @@ const availableTags = computed(() => {
 
 watch(() => props.paper, (p) => { paperTags.value = p ? (p.tags || []) : []; }, { immediate: true });
 
-async function loadAllTags() { try { const r = await getTags(); allTags.value = r.data || []; } catch {} }
+async function loadAllTags() { try { const r = await getTags(props.kbId); allTags.value = r.data || []; } catch {} }
 async function toggleTag(tag) {
   const has = paperTags.value.some(t => t.id === tag.id);
   const ids = has ? paperTags.value.filter(t => t.id !== tag.id).map(t => t.id) : [...paperTags.value.map(t => t.id), tag.id];

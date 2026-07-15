@@ -1,4 +1,4 @@
-﻿import http from "./index.js";
+import http from "./index.js";
 
 export function getChatSessions(paperId, kbId) {
   const params = {};
@@ -40,10 +40,10 @@ export function sendChatMessage(sessionId, message, onToken, onDone, onError) {
       buffer = lines.pop() || "";
       for (const line of lines) {
         if (line.startsWith("data: ")) {
-          const data = line.slice(6);
-          if (data === "[DONE]") { onDone(); return; }
-          if (data.startsWith("__ERROR__")) { onError(data.slice(9)); return; }
-          onToken(data);
+          const raw = line.slice(6);
+          if (raw === "[DONE]") { onDone(); return; }
+          if (raw.startsWith("__ERROR__")) { onError(raw.slice(9)); return; }
+          try { onToken(JSON.parse(raw)); } catch(_) { onToken(raw); }
         }
       }
     }

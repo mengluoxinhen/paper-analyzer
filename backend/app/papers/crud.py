@@ -1,4 +1,4 @@
-﻿from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, delete, insert
 from app.papers.model import Paper, Folder, Tag, KnowledgeBase, paper_tags, Summary, Conversation, Extraction, ChatSession
 import os
@@ -390,7 +390,11 @@ async def set_paper_tags(db: AsyncSession, paper_id: str, tag_ids: list[str]) ->
 
 async def check_duplicate_md5(db: AsyncSession, kb_id: str, file_md5: str) -> Paper | None:
     result = await db.execute(
-        select(Paper).where(Paper.knowledge_base_id == kb_id, Paper.file_md5 == file_md5)
+        select(Paper).where(
+            Paper.knowledge_base_id == kb_id,
+            Paper.file_md5 == file_md5,
+            Paper.review_status != "rejected",
+        )
     )
     return result.scalar_one_or_none()
 
@@ -411,19 +415,23 @@ async def get_pending_papers(db: AsyncSession, kb_id: str) -> list[dict]:
         ).order_by(Paper.created_at.desc())
     )
     papers = list(result.scalars().all())
+
+    # Batch load all approved titles for duplicate detection
+    approved_result = await db.execute(
+        select(Paper.title).where(
+            Paper.knowledge_base_id == kb_id,
+            Paper.review_status == "approved"
+        )
+    )
+    approved_titles = [at for (at,) in approved_result.fetchall() if at]
+
     out = []
     for p in papers:
         is_dup = False
         dup_title = ""
         if p.title:
-            approved = await db.execute(
-                select(Paper.title).where(
-                    Paper.knowledge_base_id == kb_id,
-                    Paper.review_status == "approved"
-                )
-            )
-            for (at,) in approved.fetchall():
-                if at and _title_similar(p.title, at):
+            for at in approved_titles:
+                if _title_similar(p.title, at):
                     is_dup = True
                     dup_title = at
                     break

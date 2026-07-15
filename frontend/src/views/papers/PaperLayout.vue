@@ -226,6 +226,12 @@ async function handleUpload(title, pdfFile, folderId) {
       delete parseProgressMap[paperId];
     }
     await store.fetchList();
+    // 解析完成后自动加载论文并触发总结
+    store.currentPaper = await store.fetchPaper(paperId);
+    if (store.currentPaper.status === "parsed" && store.currentPaper.md_content) {
+      summarizing.value = true;
+      try { await streamSummarize(paperId); } finally { summarizing.value = false; }
+    }
   } catch (e) {
     ElMessage.error("上传失败：" + (e?.response?.data?.detail || e.message));
   }
@@ -313,16 +319,17 @@ async function streamSummarize(paperId) {
             summaryStreamText.value = '';
             return;
           }
-          if (data.startsWith("__CACHED__")) {
+          let decoded = data; try { decoded = JSON.parse(data); } catch(_) {}
+          if (decoded.startsWith("__CACHED__")) {
             try {
-              const cached = JSON.parse(data.slice(10));
+              const cached = JSON.parse(decoded.slice(10));
               store.currentSummary = cached;
             } catch(e) { /* ignore */ }
             summaryStreamText.value = '';
             summarizing.value = false;
             return;
           }
-          summaryStreamText.value += data;
+          summaryStreamText.value += decoded;
         }
       }
     }
