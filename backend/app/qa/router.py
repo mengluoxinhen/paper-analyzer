@@ -127,7 +127,64 @@ def _build_qa_prompt(question: str, chunks: list[dict]) -> str:
 
 ---
 
-用户问题：{question}"""
+用户问题：{question}
+"""
+
+@router.post("/ask")
+async def ask_question(body: schemas.QARequest, kb_id: str = Query(...), db: AsyncSession = DBSession):
+    if not body.question.strip():
+        raise HTTPException(400, "问题不能为空")
+
+    # Step 1: Rewrite query for better retrieval
+    search_query = await _rewrite_query(body.question, db, kb_id)
+    if "NOT_RELEVANT" in search_query:
+        raise HTTPException(400, "您的问题与论文库主题不相关，请尝试其他问题")
+
+    # Step 2: Embed the optimized query
+    try:
+        query_emb = await embedder.get_embedding(search_query)
+    except Exception as e:
+        raise HTTPException(500, f"Embedding 请求失败: {e}")
+
+    # Step 3: Search with optimized embedding
+    chunks = indexer.search_chunks(query_emb, kb_id, top_k=8)
+    if not chunks:
+        raise HTTPException(400, "未找到相关论文内容，请先上传并解析论文")
+
+    async def event_stream():
+        from app.papers.service import _get_llm_config
+
+        prompt = _build_qa_prompt(body.question, chunks)
+        cfg = await _get_llm_config(db)
+
+        from openai import AsyncOpenAI
+        client = AsyncOpenAI(api_key=cfg["api_key"], base_url=cfg["api_base"])
+
+        try:
+            stream = await client.chat.completions.create(
+                model=cfg["model"],
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=cfg["max_tokens"],
+                temperature=cfg["temperature"],
+                stream=True,
+            )
+
+            async for chunk in stream:
+                delta = chunk.choices[0].delta
+                if delta.content:
+                    yield f"data: {delta.content}\n\n".encode("utf-8")
+
+            sources_info = [
+                {"paper_id": c["paper_id"], "paper_title": c["paper_title"], "section": c["section"]}
+                for c in chunks
+            ]
+            yield f"data: __SOURCES__{json.dumps(sources_info, ensure_ascii=False)}\n\n".encode("utf-8")
+            yield f"data: [DONE]\n\n".encode("utf-8")
+
+        except Exception as e:
+            yield f"data: __ERROR__{str(e)}\n\n".encode("utf-8")
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 @router.post("/rebuild", response_model=schemas.QARebuildResponse)

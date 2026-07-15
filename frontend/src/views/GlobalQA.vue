@@ -245,7 +245,11 @@ function scrollToBottom() {
 async function handleRebuild() {
   rebuilding.value = true;
   try {
-    if (!kbStore.currentId) return;
+    if (!kbStore.currentId) {
+      ElMessage.warning("请先选择知识库");
+      rebuilding.value = false;
+      return;
+    }
     const res = await rebuildIndex(kbStore.currentId);
     ElMessage.success(res.data.message || "索引重建完成");
   } catch {
