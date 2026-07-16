@@ -80,6 +80,14 @@
               <pre v-if="showRaw" class="raw-md">{{ msg.content }}</pre>
               <span v-else v-html="renderMarkdown(msg.content)"></span>
             </div>
+            <div v-if="msg.role === 'assistant' && messageSources[idx]" class="msg-sources">
+              <div class="sources-title">📚 参考来源</div>
+              <div v-for="(src, si) in messageSources[idx]" :key="si" class="source-item">
+                <span class="source-idx">[{{ si + 1 }}]</span>
+                <span class="source-title">{{ src.paper_title }}</span>
+                <span v-if="src.section" class="source-section">{{ src.section }}</span>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -129,6 +137,8 @@ const messages = ref([]);
 const input = ref("");
 const streamText = ref("");
 const streamLoading = ref(false);
+const pendingSources = ref(null);
+const messageSources = ref({});
 const chatBody = ref(null);
 const inputEl = ref(null);
 const showRaw = ref(false);
@@ -221,7 +231,12 @@ async function sendMessage() {
     },
     async () => {
       streamLoading.value = false;
+      const newIdx = messages.value.length;
       messages.value.push({ role: "assistant", content: streamText.value });
+      if (pendingSources.value) {
+        messageSources.value[newIdx] = pendingSources.value;
+        pendingSources.value = null;
+      }
       streamText.value = "";
       await loadSessions();
       scrollToBottom();
@@ -231,6 +246,9 @@ async function sendMessage() {
       messages.value.push({ role: "assistant", content: "❌ 错误: " + err });
       streamText.value = "";
       scrollToBottom();
+    },
+    (sources) => {
+      pendingSources.value = sources;
     }
   );
 }
@@ -356,5 +374,12 @@ async function handleRebuild() {
 .qa-send-btn { width: 36px; height: 36px; border-radius: 50%; border: none; background: var(--accent); color: #fff; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.15s; flex-shrink: 0; }
 .qa-send-btn:hover:not(:disabled) { background: var(--accent-hover); transform: scale(1.05); }
 .qa-send-btn:disabled { background: var(--border-light); color: var(--text-tertiary); cursor: not-allowed; }
+
+.msg-sources { margin-top: 8px; padding: 10px 14px; background: rgba(91,95,227,0.04); border-radius: var(--radius-md); border: 1px solid var(--border-light); }
+.sources-title { font-size: 11px; font-weight: 600; color: var(--text-tertiary); margin-bottom: 6px; }
+.source-item { display: flex; align-items: baseline; gap: 6px; padding: 3px 0; font-size: 12px; }
+.source-idx { color: var(--accent); font-weight: 600; flex-shrink: 0; min-width: 24px; }
+.source-title { color: var(--text-primary); font-weight: 500; }
+.source-section { color: var(--text-tertiary); font-size: 11px; }
 </style>
 

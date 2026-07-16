@@ -159,6 +159,9 @@ async def send_message(session_id: str, body: ChatSendRequest, db: AsyncSession 
                     async for chunk in stream:
                         delta = chunk.choices[0].delta
                         if delta.content: full_text += delta.content; yield f"data: {json.dumps(delta.content)}\n\n".encode("utf-8")
+                    # Send source references
+                    sources_info = [{"paper_id": ch["paper_id"], "paper_title": ch["paper_title"], "section": ch.get("section", "")} for ch in chunks]
+                    yield f"data: __SOURCES__{json.dumps(sources_info, ensure_ascii=False)}\n\n".encode("utf-8")
                 except Exception as e:
                     yield f"data: __ERROR__{str(e)}\n\n".encode("utf-8")
                     return

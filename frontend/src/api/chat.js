@@ -23,7 +23,7 @@ export function getChatMessages(sessionId) {
   return http.get("/chat/sessions/" + sessionId + "/messages");
 }
 
-export function sendChatMessage(sessionId, message, onToken, onDone, onError) {
+export function sendChatMessage(sessionId, message, onToken, onDone, onError, onSources) {
   return fetch("/api/chat/sessions/" + sessionId + "/send", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message }),
@@ -43,6 +43,7 @@ export function sendChatMessage(sessionId, message, onToken, onDone, onError) {
           const raw = line.slice(6);
           if (raw === "[DONE]") { onDone(); return; }
           if (raw.startsWith("__ERROR__")) { onError(raw.slice(9)); return; }
+          if (raw.startsWith("__SOURCES__")) { if (onSources) onSources(JSON.parse(raw.slice(11))); continue; }
           try { onToken(JSON.parse(raw)); } catch(_) { onToken(raw); }
         }
       }
