@@ -262,12 +262,11 @@ async def delete_tag(db: AsyncSession, tag_id: str) -> bool:
 
 async def create_paper(db: AsyncSession, title: str, filename: str,
                        pdf_path: str, folder_id: str | None = None,
-                       kb_id: str | None = None, file_md5: str = "",
-                       review_status: str = "none") -> Paper:
+                       kb_id: str | None = None, file_md5: str = "") -> Paper:
     paper = Paper(
         title=title, filename=filename, pdf_path=pdf_path,
         folder_id=folder_id, knowledge_base_id=kb_id or "",
-        file_md5=file_md5, review_status=review_status
+        file_md5=file_md5
     )
     db.add(paper)
     await db.commit()
@@ -393,7 +392,6 @@ async def check_duplicate_md5(db: AsyncSession, kb_id: str, file_md5: str) -> Pa
         select(Paper).where(
             Paper.knowledge_base_id == kb_id,
             Paper.file_md5 == file_md5,
-            Paper.review_status != "rejected",
         )
     )
     return result.scalar_one_or_none()
@@ -403,67 +401,6 @@ def _title_similar(a: str, b: str) -> bool:
     if not a or not b:
         return False
     return SequenceMatcher(None, a.lower().strip(), b.lower().strip()).ratio() > 0.85
-
-
-# ── Review CRUD ──
-
-async def get_pending_papers(db: AsyncSession, kb_id: str) -> list[dict]:
-    result = await db.execute(
-        select(Paper).where(
-            Paper.knowledge_base_id == kb_id,
-            Paper.review_status == "pending"
-        ).order_by(Paper.created_at.desc())
-    )
-    papers = list(result.scalars().all())
-
-    # Batch load all approved titles for duplicate detection
-    approved_result = await db.execute(
-        select(Paper.title).where(
-            Paper.knowledge_base_id == kb_id,
-            Paper.review_status == "approved"
-        )
-    )
-    approved_titles = [at for (at,) in approved_result.fetchall() if at]
-
-    out = []
-    for p in papers:
-        is_dup = False
-        dup_title = ""
-        if p.title:
-            for at in approved_titles:
-                if _title_similar(p.title, at):
-                    is_dup = True
-                    dup_title = at
-                    break
-        out.append({
-            "id": p.id, "title": p.title, "filename": p.filename,
-            "created_at": p.created_at,
-            "is_duplicate": is_dup, "duplicate_title": dup_title
-        })
-    return out
-
-
-async def approve_paper(db: AsyncSession, paper_id: str) -> Paper | None:
-    paper = await db.get(Paper, paper_id)
-    if not paper:
-        return None
-    paper.review_status = "approved"
-    paper.reviewed_at = datetime.now()
-    await db.commit()
-    await db.refresh(paper)
-    return paper
-
-
-async def reject_paper(db: AsyncSession, paper_id: str, comment: str) -> Paper | None:
-    paper = await db.get(Paper, paper_id)
-    if not paper:
-        return None
-    paper.review_status = "rejected"
-    paper.review_comment = comment
-    paper.reviewed_at = datetime.now()
-    await db.commit()
-    await db.refresh(paper)
-    return paper
 
 
 # ── Summary ──
@@ -536,9 +473,7 @@ async def paper_to_response(db: AsyncSession, paper: Paper) -> dict:
         "folder_id": paper.folder_id,
         "folder_name": folder.name if folder else None,
         "knowledge_base_id": paper.knowledge_base_id,
-        "review_status": paper.review_status,
         "file_md5": paper.file_md5 or "",
-        "review_comment": paper.review_comment or "",
         "tags": [{"id": t.id, "name": t.name} for t in tags],
         "created_at": paper.created_at,
     }

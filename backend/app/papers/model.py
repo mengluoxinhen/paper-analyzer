@@ -66,10 +66,7 @@ class Paper(Base):
     mineru_batch_id = Column(String(200), default="")
     folder_id = Column(String(32), nullable=True, default=None)
     knowledge_base_id = Column(String(32), nullable=False, index=True)
-    review_status = Column(String(20), default="none")
     file_md5 = Column(String(32), default="")
-    reviewed_at = Column(DateTime, nullable=True, default=None)
-    review_comment = Column(String(500), default="")
     created_at = Column(DateTime, server_default=func.now())
 
 

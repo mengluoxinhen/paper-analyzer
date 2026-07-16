@@ -24,25 +24,6 @@ class KnowledgeBaseResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
-# ── Review ──
-class ReviewRejectRequest(BaseModel):
-    comment: str = ""
-
-
-class ReviewPaperItem(BaseModel):
-    id: str
-    title: str
-    filename: str
-    created_at: datetime
-    is_duplicate: bool = False
-    duplicate_title: str = ""
-
-
-class ReviewListResponse(BaseModel):
-    papers: list[ReviewPaperItem]
-    total: int
-
-
 # ── Folder ──
 class FolderCreate(BaseModel):
     name: str
@@ -105,9 +86,7 @@ class PaperResponse(BaseModel):
     folder_id: str | None = None
     folder_name: str | None = None
     knowledge_base_id: str | None = None
-    review_status: str = "none"
     file_md5: str = ""
-    review_comment: str = ""
     tags: list[TagItem] = []
     created_at: datetime
     model_config = {"from_attributes": True}

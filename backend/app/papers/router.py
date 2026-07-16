@@ -19,7 +19,6 @@ router = APIRouter(prefix="/api/papers", tags=["papers"])
 folder_router = APIRouter(prefix="/api/folders", tags=["folders"])
 tag_router = APIRouter(prefix="/api/tags", tags=["tags"])
 kb_router = APIRouter(prefix="/api/knowledge-bases", tags=["knowledge-bases"])
-admin_router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 
 def _is_admin(user_id: str) -> bool:
@@ -187,14 +186,10 @@ async def upload_paper(
     if kb.is_shared:
         dup = await crud.check_duplicate_md5(db, kb_id, file_md5)
         if dup:
-            if dup.review_status == "pending":
-                # 替换旧的待审核论文
-                await crud.delete_paper(db, dup.id)
-            else:
-                # 删除刚上传的文件
-                try: os.unlink(pdf_path)
-                except OSError: pass
-                raise HTTPException(400, f"该论文已存在于共享库中：{dup.title or dup.filename}")
+            # 删除刚上传的文件
+            try: os.unlink(pdf_path)
+            except OSError: pass
+            raise HTTPException(400, f"该论文已存在于共享库中：{dup.title or dup.filename}")
 
     # 验证 folder_id
     if folder_id is not None:
@@ -202,13 +197,11 @@ async def upload_paper(
         if not folder:
             raise HTTPException(400, "目标文件夹不存在")
 
-    # 共享库上传设为 pending 审核状态
-    review_status = "pending" if kb.is_shared else "none"
 
     paper = await crud.create_paper(
         db, title=title, filename=filename,
         pdf_path=pdf_path, folder_id=folder_id, kb_id=kb_id,
-        file_md5=file_md5, review_status=review_status,
+        file_md5=file_md5,
     )
     paper.status = "uploaded"
     await db.commit()
@@ -258,11 +251,9 @@ async def parse_paper(paper_id: str, db: AsyncSession = DBSession):
                 p.mineru_batch_id = batch_id
                 p.status = "parsed"
                 await s2.commit()
-                # 只有审核通过 / 私有库的才入索引
-                if p.review_status == "approved" or p.review_status == "none":
-                    try:
-                        await indexer.index_paper(p.id, p.title or p.filename, md_content, p.knowledge_base_id)
-                    except Exception: pass
+                try:
+                    await indexer.index_paper(p.id, p.title or p.filename, md_content, p.knowledge_base_id)
+                except Exception: pass
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
@@ -385,32 +376,3 @@ async def extract_paper_info(paper_id: str, body: schemas.ExtractRequest, db: As
 @router.get("/{paper_id}/extractions", response_model=list[schemas.ExtractionResponse])
 async def get_extractions(paper_id: str, db: AsyncSession = DBSession):
     return await crud.get_extractions(db, paper_id)
-
-
-# ═══════════════ Admin Review ═══════════════
-
-@admin_router.get("/review", response_model=schemas.ReviewListResponse)
-async def list_pending(kb_id: str = Query(...), db: AsyncSession = DBSession):
-    papers = await crud.get_pending_papers(db, kb_id)
-    return {"papers": papers, "total": len(papers)}
-
-
-@admin_router.post("/review/{paper_id}/approve")
-async def approve_paper(paper_id: str, db: AsyncSession = DBSession):
-    paper = await crud.approve_paper(db, paper_id)
-    if not paper:
-        raise HTTPException(404, "论文不存在")
-    # 审核通过后入 ChromaDB
-    if paper.md_content:
-        try:
-            await indexer.index_paper(paper.id, paper.title or paper.filename, paper.md_content, paper.knowledge_base_id)
-        except Exception: pass
-    return {"ok": True}
-
-
-@admin_router.post("/review/{paper_id}/reject")
-async def reject_paper(paper_id: str, body: schemas.ReviewRejectRequest, db: AsyncSession = DBSession):
-    paper = await crud.reject_paper(db, paper_id, body.comment)
-    if not paper:
-        raise HTTPException(404, "论文不存在")
-    return {"ok": True}

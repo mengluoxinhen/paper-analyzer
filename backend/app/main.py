@@ -37,13 +37,12 @@ async def health():
 
 
 from app.settings.router import router as settings_router
-from app.papers.router import router as papers_router, folder_router, tag_router, kb_router, admin_router
+from app.papers.router import router as papers_router, folder_router, tag_router, kb_router
 from app.qa.router import router as qa_router
 from app.qa.chat_router import router as chat_router
 
 app.include_router(settings_router)
 app.include_router(kb_router)
-app.include_router(admin_router)
 app.include_router(folder_router)
 app.include_router(tag_router)
 app.include_router(papers_router)
